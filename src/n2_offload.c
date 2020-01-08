@@ -16,15 +16,7 @@ LOG_MODULE_REGISTER(sara_n2);
 #include <net/net_offload.h>
 #include <net/socket_offload.h>
 
-// The maximum number of sockets in SARA N2 is 7
-#define MDM_MAX_SOCKETS 7
-
-// 2 second timeout for commands. This is ample time<
-#define MDM_CMD_TIMEOUT 2
-
-#define CONFIG_N2_NAME "SARA_N2"
-#define CONFIG_N2_INIT_PRIORITY 80
-#define CONFIG_N2_MAX_PACKET_SIZE 512
+#include "config.h"
 
 struct n2_socket
 {
@@ -233,7 +225,26 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
         return -EINVAL;
     }
 
+    if (sockets[sock_fd].connected)
+    {
+        LOG_DBG("Socket is already connected");
+        return -EINVAL;
+    }
+
+    struct sockaddr_in *toaddr = (struct sockaddr_in *)to;
+
+    char addr[64];
+
+    if (!inet_ntop(AF_INET, &toaddr->sin_addr, addr, 128))
+    {
+        LOG_ERR("Unable to convert address to string");
+        // couldn't read address. Bail out
+        return -EINVAL;
+    }
+    LOG_DBG("Address: %s", log_strdup(addr));
+    LOG_DBG("Port: %d", ntohs(toaddr->sin_port));
     LOG_DBG("Send command: AT+NSOST=%d,[addr],[port],[len],[hex]", sockets[sock_fd].id);
+
     return len;
 }
 

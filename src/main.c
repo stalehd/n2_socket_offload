@@ -23,10 +23,14 @@ LOG_MODULE_REGISTER(app);
 #include <zephyr.h>
 #include <net/socket.h>
 
+#include "comms.h"
+
 static const char *message = "Hello there";
 
 void main(void)
 {
+    init_comms();
+
     LOG_DBG("Sending packet (%s)", message);
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -54,5 +58,29 @@ void main(void)
 
     close(sock);
 
-    LOG_DBG("Packet sent");
+    LOG_DBG("Enter send loop");
+
+    modem_write("AT+CFUN=0\r\n");
+    k_sleep(K_MSEC(1500));
+    modem_write("AT+CGDCONT=0,\"IP\",\"mda.ee\"\r\n");
+    k_sleep(K_MSEC(1500));
+    modem_write("AT+NCONFIG=\"AUTOCONNECT\",\"TRUE\"\r\n");
+    k_sleep(K_MSEC(1500));
+    modem_write("AT+CFUN=1\r\n");
+    k_sleep(K_MSEC(1500));
+    modem_write("AT+CIMI\r\n");
+    k_sleep(K_MSEC(1500));
+    modem_write("AT+CGSN=1\r\n");
+    k_sleep(K_MSEC(1500));
+    modem_write("AT+NCONFIG?\r\n");
+    k_sleep(K_MSEC(2500));
+    modem_write("AT+CGDCONT?\r\n");
+    k_sleep(K_MSEC(1500));
+    while (true)
+    {
+        k_sleep(K_MSEC(5000));
+        modem_write("AT+CGPADDR\r\n");
+    }
+
+    LOG_DBG("Halting firmware");
 }
