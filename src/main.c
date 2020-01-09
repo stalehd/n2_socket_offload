@@ -27,6 +27,29 @@ LOG_MODULE_REGISTER(app);
 
 static const char *message = "Hello there";
 
+#define MAX_RESP_SIZE 256
+static char resp[MAX_RESP_SIZE];
+
+static char buf_copy[256];
+static void send_command(const char *buf, s32_t timeout)
+{
+    size_t len = strlen(buf);
+    memcpy(buf_copy, buf, len);
+    buf_copy[len - 2] = 0;
+    LOG_DBG("Sent: %s", log_strdup(buf_copy));
+
+    modem_write(buf);
+    k_sleep(K_MSEC(timeout));
+
+    int read = modem_read(resp, MAX_RESP_SIZE, K_MSEC(timeout));
+    if (read == 0)
+    {
+        LOG_DBG("0 bytes returned");
+        return;
+    }
+    resp[read] = 0;
+}
+
 void main(void)
 {
     init_comms();
@@ -60,26 +83,36 @@ void main(void)
 
     LOG_DBG("Enter send loop");
 
-    modem_write("AT+CFUN=0\r\n");
-    k_sleep(K_MSEC(1500));
-    modem_write("AT+CGDCONT=0,\"IP\",\"mda.ee\"\r\n");
-    k_sleep(K_MSEC(1500));
-    modem_write("AT+NCONFIG=\"AUTOCONNECT\",\"TRUE\"\r\n");
-    k_sleep(K_MSEC(1500));
-    modem_write("AT+CFUN=1\r\n");
-    k_sleep(K_MSEC(1500));
-    modem_write("AT+CIMI\r\n");
-    k_sleep(K_MSEC(1500));
-    modem_write("AT+CGSN=1\r\n");
-    k_sleep(K_MSEC(1500));
-    modem_write("AT+NCONFIG?\r\n");
-    k_sleep(K_MSEC(2500));
-    modem_write("AT+CGDCONT?\r\n");
-    k_sleep(K_MSEC(1500));
+    k_sleep(K_MSEC(500));
+
+    // Turn on signalling status
+    send_command("AT+CEREG=1\r\n", 1500);
+
+    send_command("AT+NPSMR=1\r\n", 1500);
+
+    send_command("AT+CFUN=0\r\n", 1500);
+
+    send_command("AT+CGDCONT=0,\"IP\",\"mda.ee\"\r\n", 1500);
+
+    send_command("AT+NCONFIG=\"AUTOCONNECT\",\"TRUE\"\r\n", 1500);
+
+    send_command("AT+CFUN=1\r\n", 1500);
+
+    // Attach the terminal
+    send_command("AT+CGATT=1\r\n", 5000);
+
+    send_command("AT+CIMI\r\n", 1500);
+
+    send_command("AT+CGSN=1\r\n", 1500);
+
+    send_command("AT+NCONFIG?\r\n", 2500);
+
+    // send_command("AT+CGDCONT?\r\n", 1500);
+
     while (true)
     {
-        k_sleep(K_MSEC(5000));
-        modem_write("AT+CGPADDR\r\n");
+        k_sleep(K_MSEC(30000));
+        send_command("AT+CGPADDR\r\n", 1500);
     }
 
     LOG_DBG("Halting firmware");

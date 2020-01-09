@@ -88,7 +88,7 @@ static int offload_close(int sock_fd)
     }
     sockets[sock_fd].id = 0;
     // use AT+NSOCL
-    LOG_DBG("Send command: AT+NSOCL=%d\r\n", sockets[sock_fd].id);
+    LOG_DBG("Send command: AT+NSOCL=%d", sockets[sock_fd].id);
     // Find socket (use index) and close it on the modem
     return 0;
 }
