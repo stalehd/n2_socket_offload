@@ -39,62 +39,17 @@ static struct n2_socket sockets[MDM_MAX_SOCKETS];
 static int next_free_socket = 0;
 static int next_free_port = 6000;
 
-static bool is_valid_socket(int sock_fd)
-{
-    if (sockets[sock_fd].id >= 0)
-    {
-        return true;
-    }
-    return false;
-}
-
 #define CMD_BUFFER_SIZE 32
 static char modem_command_buffer[CMD_BUFFER_SIZE];
 
 #define CMD_TIMEOUT 1500
 
-static int offload_socket(int family, int type, int proto)
-{
-    if (family != AF_INET)
-    {
-        return -EAFNOSUPPORT;
-    }
-    if (type != SOCK_DGRAM)
-    {
-        return -ENOTSUP;
-    }
-    if (proto != IPPROTO_UDP)
-    {
-        return -ENOTSUP;
-    }
+#define TO_HEX(i) (i <= 9 ? '0' + i : 'A' - 10 + i)
+#define VALID_SOCKET(s) (sockets[s].id >= 0)
 
-    if (next_free_socket > MDM_MAX_SOCKETS)
-    {
-        return -ENOMEM;
-    }
-    int fd = next_free_socket;
-    next_free_socket++;
-    sockets[fd].local_port = next_free_port;
-    next_free_port++;
-
-    sprintf(modem_command_buffer, "AT+NSOCR=\"DGRAM\",17,%d,1\r\n", sockets[fd].local_port);
-    modem_write(modem_command_buffer);
-    if (modem_get_result(CMD_TIMEOUT) != MODEM_OK)
-    {
-        LOG_ERR("Unable to create socket. Did not get OK from modem on NSOCR");
-        return -ENOMEM;
-    }
-    struct modem_result result;
-    if (!modem_read(&result))
-    {
-        LOG_ERR("Unable to read socket fd from modem");
-        return -ENOMEM;
-    }
-    sockets[fd].id = atoi(result.buffer);
-    LOG_DBG("Created socket. fd = %d, modem fd = %d, local port = %d", fd, sockets[fd].id, sockets[fd].local_port);
-    return fd;
-}
-
+/**
+ * @brief Clear socket state
+ */
 static void clear_socket(int sock_fd)
 {
     sockets[sock_fd].id = -1;
@@ -118,7 +73,7 @@ static void clear_socket(int sock_fd)
 
 static int offload_close(int sock_fd)
 {
-    if (!is_valid_socket(sock_fd))
+    if (!VALID_SOCKET(sock_fd))
     {
         return -EINVAL;
     }
@@ -136,7 +91,7 @@ static int offload_close(int sock_fd)
 static int offload_connect(int sock_fd, const struct sockaddr *addr,
                            socklen_t addrlen)
 {
-    if (!is_valid_socket(sock_fd))
+    if (!VALID_SOCKET(sock_fd))
     {
         return -EINVAL;
     }
@@ -152,13 +107,14 @@ static int offload_connect(int sock_fd, const struct sockaddr *addr,
     return 0;
 }
 
+//TODO: Implement
 static int offload_poll(struct pollfd *fds, int nfds, int msecs)
 {
     if (nfds != 1)
     {
         return -EINVAL;
     }
-    if (!is_valid_socket(fds[0].fd))
+    if (!VALID_SOCKET(fds[0].fd))
     {
         return -EINVAL;
     }
@@ -205,29 +161,39 @@ static ssize_t read_incoming_data(int sock_fd, void *buf, short int len)
     return return_len;
 }
 
+// TODO: Implement
 static ssize_t offload_recvfrom(int sock_fd, void *buf, short int len,
                                 short int flags, struct sockaddr *from,
                                 socklen_t *fromlen)
 {
     ARG_UNUSED(flags);
 
-    if (!is_valid_socket(sock_fd))
+    if (!VALID_SOCKET(sock_fd))
     {
         return -EINVAL;
     }
+
+    //TODO: modem_poll_incoming(sockers[sock_fd].id,
+    //   sockets[sock_fd].incoming,
+    //   sockets[sock_fd].incoming_len,
+    //   sockets[sock_fd].remote_addr,
+    //   sockets[sock_fd].remote_len);
+
     if (!sockets[sock_fd].incoming)
     {
         // no data waiting
         return 0;
     }
-    if (*fromlen < sockets[sock_fd].remote_len)
+    if (from && fromlen)
     {
-        // not enough room for socket address
-        return -EINVAL;
+        if (*fromlen < sockets[sock_fd].remote_len)
+        {
+            // not enough room for socket address
+            return -EINVAL;
+        }
+        memcpy(from, sockets[sock_fd].remote_addr, sockets[sock_fd].remote_len);
+        *fromlen = sockets[sock_fd].remote_len;
     }
-    memcpy(from, sockets[sock_fd].remote_addr, sockets[sock_fd].remote_len);
-    *fromlen = sockets[sock_fd].remote_len;
-
     return read_incoming_data(sock_fd, buf, len);
 }
 
@@ -235,27 +201,23 @@ static ssize_t offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
 {
     ARG_UNUSED(flags);
 
-    if (!is_valid_socket(sock_fd))
+    if (!VALID_SOCKET(sock_fd))
     {
         return -EINVAL;
     }
 
-    if (!sockets[sock_fd].incoming)
+    if (!sockets[sock_fd].connected)
     {
-        // no data waiting
-        return 0;
+        return -EINVAL;
     }
-
-    return read_incoming_data(sock_fd, buf, max_len);
+    return offload_recvfrom(sock_fd, buf, max_len, flags, NULL, NULL);
 }
-
-#define TO_HEX(i) (i <= 9 ? '0' + i : 'A' - 10 + i)
 
 static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
                               int flags, const struct sockaddr *to,
                               socklen_t tolen)
 {
-    if (!is_valid_socket(sock_fd))
+    if (!VALID_SOCKET(sock_fd))
     {
         LOG_DBG("invalid socket fd. Can't sendto()");
         return -EINVAL;
@@ -317,6 +279,7 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
         return -ENOMEM;
     }
 
+    /*
     // This is just to make certain. If the modem says "OK" we should trust it
     // ....I think.
     char *count = NULL;
@@ -331,16 +294,14 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
         }
         ptr++;
     }
-
-    LOG_DBG("Wrote %d bytes to socket %d/%d. Result says fd = %s, len = %s",
-            len, sock_fd, sockets[sock_fd].id, log_strdup(result.buffer), log_strdup(count));
+    */
 
     return len;
 }
 
 static ssize_t offload_send(int sock_fd, const void *buf, size_t len, int flags)
 {
-    if (!is_valid_socket(sock_fd))
+    if (!VALID_SOCKET(sock_fd))
     {
         LOG_DBG("Invalid socket. Can't send()");
         return -EINVAL;
@@ -350,8 +311,50 @@ static ssize_t offload_send(int sock_fd, const void *buf, size_t len, int flags)
         return -ENOTCONN;
     }
 
-    LOG_DBG("Send command: AT+NSOST=%d,[addr],[port],[len],[hex]", sockets[sock_fd].id);
-    return len;
+    return offload_sendto(sock_fd, buf, len, flags,
+                          sockets[sock_fd].remote_addr, sockets[sock_fd].remote_len);
+}
+
+static int offload_socket(int family, int type, int proto)
+{
+    if (family != AF_INET)
+    {
+        return -EAFNOSUPPORT;
+    }
+    if (type != SOCK_DGRAM)
+    {
+        return -ENOTSUP;
+    }
+    if (proto != IPPROTO_UDP)
+    {
+        return -ENOTSUP;
+    }
+
+    if (next_free_socket > MDM_MAX_SOCKETS)
+    {
+        return -ENOMEM;
+    }
+    int fd = next_free_socket;
+    next_free_socket++;
+    sockets[fd].local_port = next_free_port;
+    next_free_port++;
+
+    sprintf(modem_command_buffer, "AT+NSOCR=\"DGRAM\",17,%d,1\r\n", sockets[fd].local_port);
+    modem_write(modem_command_buffer);
+    if (modem_get_result(CMD_TIMEOUT) != MODEM_OK)
+    {
+        LOG_ERR("Unable to create socket. Did not get OK from modem on NSOCR");
+        return -ENOMEM;
+    }
+    struct modem_result result;
+    if (!modem_read(&result))
+    {
+        LOG_ERR("Unable to read socket fd from modem");
+        return -ENOMEM;
+    }
+    sockets[fd].id = atoi(result.buffer);
+    LOG_DBG("Created socket. fd = %d, modem fd = %d, local port = %d", fd, sockets[fd].id, sockets[fd].local_port);
+    return fd;
 }
 
 // We're only interested in socket(), close(), connect(), poll()/POLLIN, send() and recvfrom()

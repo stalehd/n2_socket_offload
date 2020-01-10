@@ -35,26 +35,14 @@ static int last_result;
 // lines are not included.
 struct k_fifo results;
 
+static struct device *uart_dev;
+
 /*
  * Modem comms. It's quite a mechanism - the UART is read from an ISR, then
  * sent to a processing thread via a ring buffer. The processing thread
  * parses the incoming data stream and when OK or ERROR is received the
  * data is forwarded to the consuming library via modem_read_line.
  */
-bool modem_read(struct modem_result *result)
-{
-    struct modem_result *rx;
-
-    rx = k_fifo_get(&results, K_NO_WAIT);
-    if (!rx)
-    {
-        return false;
-    }
-
-    strcpy(result->buffer, rx->buffer);
-    k_free(rx);
-    return true;
-}
 
 /**
  * @brief The ISR for UART rx
@@ -84,8 +72,6 @@ static void uart_isr(void *user_data)
     }
 }
 
-static struct device *uart_dev;
-
 static void flush_stale_results()
 {
     // Flush the FIFO for any old commands
@@ -111,6 +97,21 @@ void modem_write(const char *cmd)
     {
         uart_poll_out(uart_dev, *buf++);
     } while (--data_size);
+}
+
+bool modem_read(struct modem_result *result)
+{
+    struct modem_result *rx;
+
+    rx = k_fifo_get(&results, K_NO_WAIT);
+    if (!rx)
+    {
+        return false;
+    }
+
+    strcpy(result->buffer, rx->buffer);
+    k_free(rx);
+    return true;
 }
 
 /**
@@ -237,10 +238,11 @@ void modem_rx_thread(void)
 #define RX_THREAD_STACK 1024
 #define RX_THREAD_PRIORITY 5
 
+struct k_thread rx_thread;
+
 /* RX thread structures */
 K_THREAD_STACK_DEFINE(rx_thread_stack,
                       RX_THREAD_STACK);
-struct k_thread rx_thread;
 
 void modem_init(void)
 {
