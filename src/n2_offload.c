@@ -15,12 +15,18 @@ LOG_MODULE_REGISTER(sara_n2);
 #include <init.h>
 #include <net/net_offload.h>
 #include <net/socket_offload.h>
+#include <stdio.h>
 
 #include "config.h"
+#include "comms.h"
+
+// The maximum number of sockets in SARA N2 is 7
+#define MDM_MAX_SOCKETS 7
 
 struct n2_socket
 {
     int id;
+    int modem_id;
     bool connected;
     struct sockaddr *addr;
     int local_port;
@@ -48,6 +54,12 @@ static bool is_valid_socket(int sock_fd)
     return false;
 }
 
+#define CMD_BUFFER_SIZE 32
+static char modem_command_buffer[CMD_BUFFER_SIZE];
+
+#define CMD_TIMEOUT 1500
+static struct modem_result mdm_result;
+
 static int offload_socket(int family, int type, int proto)
 {
     if (family != AF_INET)
@@ -73,11 +85,48 @@ static int offload_socket(int family, int type, int proto)
     sockets[fd].local_port = next_free_port;
     next_free_port++;
 
-    LOG_DBG("Send command: AT+NSOCR=\"DGRAM\",17,%d,1", sockets[fd].local_port);
-    // TODO: Implement new socket here. The socket might be initialized but not
-    // created at this point since we want to bind to a certain port locally.
-    // If sendto is called we'll create the socket.
+    /*
+    sprintf(modem_command_buffer, "AT+NSOCR=\"DGRAM\",17,%d,1\r\n", sockets[fd].local_port);
+    modem_write(modem_command_buffer);
+
+    if (modem_read_line(&mdm_result, CMD_TIMEOUT) == 0)
+    {
+        LOG_ERR("Unable to read from modem");
+        return -ENOMEM;
+        // TODO: Panic, reset modem or something clever. If reset then drop all sockets
+    }
+    if (!mdm_result.success)
+    {
+        LOG_ERR("Unable to create socket on modem");
+        return -ENOMEM;
+    }
+
+    sockets[fd].modem_id = atoi(mdm_result.buffer);
+    LOG_DBG("Created socket. fd = %d, modem fd = %d, local port = %d", fd, sockets[fd].modem_id, sockets[fd].local_port);
+*/
     return fd;
+}
+
+static void clear_socket(int sock_fd)
+{
+    sockets[sock_fd].id = 0;
+    sockets[sock_fd].modem_id = 0;
+    sockets[sock_fd].connected = false;
+    sockets[sock_fd].local_port = 0;
+    sockets[sock_fd].incoming_len = 0;
+    sockets[sock_fd].remote_len = 0;
+    if (sockets[sock_fd].addr)
+    {
+        k_free(sockets[sock_fd].addr);
+    }
+    if (sockets[sock_fd].incoming)
+    {
+        k_free(sockets[sock_fd].incoming);
+    }
+    if (sockets[sock_fd].remote_addr)
+    {
+        k_free(sockets[sock_fd].remote_addr);
+    }
 }
 
 static int offload_close(int sock_fd)
@@ -87,9 +136,24 @@ static int offload_close(int sock_fd)
         return -EINVAL;
     }
     sockets[sock_fd].id = 0;
-    // use AT+NSOCL
-    LOG_DBG("Send command: AT+NSOCL=%d", sockets[sock_fd].id);
-    // Find socket (use index) and close it on the modem
+    /*
+    sprintf(modem_command_buffer, "AT+NSOCL=%d\r\n", sockets[sock_fd].modem_id);
+    modem_write(modem_command_buffer);
+
+    if (modem_read_line(&mdm_result, CMD_TIMEOUT) == 0)
+    {
+        LOG_ERR("Unable to read from modem when closing socket");
+        return -ENOMEM;
+    }
+
+    if (!mdm_result.success)
+    {
+        LOG_ERR("Unable to close socket on modem");
+        return -ENOMEM;
+    }
+
+    clear_socket(sock_fd);
+    return 0;*/
     return 0;
 }
 
@@ -107,7 +171,7 @@ static int offload_connect(int sock_fd, const struct sockaddr *addr,
     }
 
     sockets[sock_fd].connected = true;
-    sockets[sock_fd].remote_addr = malloc(addrlen);
+    sockets[sock_fd].remote_addr = k_malloc(addrlen);
     memcpy(sockets[sock_fd].remote_addr, addr, addrlen);
     return 0;
 }
@@ -148,17 +212,17 @@ static ssize_t read_incoming_data(int sock_fd, void *buf, short int len)
 
     if (remaining > 0)
     {
-        remaining_buf = malloc(remaining);
+        remaining_buf = k_malloc(remaining);
         memcpy(remaining_buf, sockets[sock_fd].incoming + len, remaining);
     }
-    free(sockets[sock_fd].incoming);
+    k_free(sockets[sock_fd].incoming);
     sockets[sock_fd].incoming = remaining_buf;
     sockets[sock_fd].incoming_len = remaining;
 
     if (sockets[sock_fd].incoming_len == 0)
     {
         // clear buffers
-        free(sockets[sock_fd].remote_addr);
+        k_free(sockets[sock_fd].remote_addr);
         sockets[sock_fd].remote_addr = NULL;
         sockets[sock_fd].remote_len = 0;
     }

@@ -9,15 +9,51 @@ LOG_MODULE_REGISTER(comms);
 #include <kernel.h>
 #include <sys/ring_buffer.h>
 #include <errno.h>
+#include <stdlib.h>
+#include "comms.h"
 
+// Ring buffer size
 #define RB_SIZE 512
+
+// Underlying ring buffer
 static u8_t buffer[RB_SIZE];
+
+// Ring buffer for received data
 static struct ring_buf rx_rb;
+
+// Semaphore for incoming data
 static struct k_sem rx_sem;
 
-int modem_read(char *buf, int max_len, s32_t timeout)
+// Result semaphore. Taken by the modem_get_result and given by
+// the rx thread.
+static struct k_sem ready_sem;
+
+// Result from last query
+static int last_result;
+
+// Results queue. Each line is an element. The OK and ERROR
+// lines are not included.
+struct k_fifo results;
+
+/*
+ * Modem comms. It's quite a mechanism - the UART is read from an ISR, then
+ * sent to a processing thread via a ring buffer. The processing thread
+ * parses the incoming data stream and when OK or ERROR is received the
+ * data is forwarded to the consuming library via modem_read_line.
+ */
+bool modem_read(struct modem_result *result)
 {
-    return 0;
+    struct modem_result *rx;
+
+    rx = k_fifo_get(&results, K_NO_WAIT);
+    if (!result)
+    {
+        return false;
+    }
+
+    strcpy(result->buffer, rx->buffer);
+    k_free(rx);
+    return true;
 }
 
 /**
@@ -50,8 +86,24 @@ static void uart_isr(void *user_data)
 
 static struct device *uart_dev;
 
+static void flush_stale_results()
+{
+    // Flush the FIFO for any old commands
+    struct modem_result *stale_result;
+    do
+    {
+        stale_result = k_fifo_get(&results, K_NO_WAIT);
+        if (stale_result)
+        {
+            k_free(stale_result);
+        }
+    } while (stale_result);
+}
+
 void modem_write(const char *cmd)
 {
+    flush_stale_results();
+
     u8_t *buf = (u8_t *)cmd;
     size_t data_size = strlen(cmd);
     do
@@ -61,12 +113,48 @@ void modem_write(const char *cmd)
 }
 
 /**
- * @brief Process a single line received from the modem.
- * @note The following URCs are handled and filtered by this function:
+ * @brief process URCs
+ * @note  The following URCs are handled and filtered by this function:
  *          - CEREG (1 = connected, 2 = connecting)
  *          - NSONMI (incoming UDP)
  *          - NPSMR (power save mode 0 normal, 1 power save)
  *          - CSCON (connection status, will probably be discarded)
+ *          - UFOTAS (FOTA status, reported on reboot)
+ */
+static bool process_urc(const char *buffer)
+{
+    if (strncmp("+CEREG", buffer, 6) == 0)
+    {
+        LOG_DBG("Network registration URC: %s", log_strdup(buffer));
+        return true;
+    }
+    if (strncmp("+NSOMNI", buffer, 7) == 0)
+    {
+        LOG_DBG("Input data URC: %s", log_strdup(buffer));
+        return true;
+    }
+    if (strncmp("+NPSMR", buffer, 6) == 0)
+    {
+        LOG_DBG("Power save URC: %s", log_strdup(buffer));
+        return true;
+    }
+    if (strncmp("+CSCON", buffer, 6) == 0)
+    {
+        LOG_DBG("Connection status URC: %s", log_strdup(buffer));
+        return true;
+    }
+    if (strncmp("+UFOTAS", buffer, 7) == 0)
+    {
+        LOG_DBG("FOTA status URC: %s", log_strdup(buffer));
+        return true;
+    }
+    // Won't handle this
+    return false;
+}
+
+/**
+ * @brief Process a single line received from the modem.
+ * @note URCs are skipped from the input
  */
 static void process_line(const char *buffer, const size_t length)
 {
@@ -79,16 +167,29 @@ static void process_line(const char *buffer, const size_t length)
     if (strncmp(buffer, "OK", 2) == 0)
     {
         // Completed response successfully - make a new response buffer
-        LOG_INF("Got sucessful response");
+        last_result = MODEM_OK;
+        k_sem_give(&ready_sem);
         return;
     }
     if (strncmp(buffer, "ERROR", 5) == 0)
     {
         // Completed response with failure - make a new response buffer
-        LOG_ERR("Got error response");
+        last_result = MODEM_ERROR;
+        k_sem_give(&ready_sem);
         return;
     }
+
+    if (buffer[0] == '+' && process_urc(buffer))
+    {
+        return;
+    }
+
     LOG_INF("Received: %s", log_strdup(buffer));
+    // I'm not checking the return from k_malloc since this will just panic
+    // which is more or less what we want if we run out of heap.
+    struct modem_result *new_item = k_malloc(sizeof(struct modem_result));
+    strncpy(new_item->buffer, buffer, RESULT_BUFFER_SIZE);
+    k_fifo_put(&results, new_item);
 }
 
 /**
@@ -139,9 +240,11 @@ K_THREAD_STACK_DEFINE(rx_thread_stack,
                       RX_THREAD_STACK);
 struct k_thread rx_thread;
 
-void init_comms(void)
+void modem_init(void)
 {
     k_sem_init(&rx_sem, 0, RB_SIZE);
+    k_sem_init(&ready_sem, 0, 1);
+    k_fifo_init(&results);
     ring_buf_init(&rx_rb, RB_SIZE, buffer);
 
     k_thread_create(&rx_thread, rx_thread_stack,
@@ -158,4 +261,94 @@ void init_comms(void)
     uart_irq_callback_user_data_set(uart_dev, uart_isr, uart_dev);
     uart_irq_rx_enable(uart_dev);
     LOG_INF("UART device loaded.");
+}
+
+void modem_restart(void)
+{
+    modem_write("AT+NRB\r\n");
+    switch (modem_get_result(5000))
+    {
+    case MODEM_OK:
+        flush_stale_results();
+        break;
+    case MODEM_ERROR:
+        LOG_ERR("Got error attempting to reboot modem");
+        break;
+    case MODEM_TIMEOUT:
+        LOG_ERR("Unable to reboot modem");
+        break;
+    }
+}
+
+int modem_get_result(s32_t timeout)
+{
+    switch (k_sem_take(&ready_sem, timeout))
+    {
+    case 0:
+        return MODEM_OK;
+    case -EBUSY:
+        return MODEM_TIMEOUT;
+    case -EAGAIN:
+        return MODEM_TIMEOUT;
+    default:
+        LOG_ERR("Unknown return code from k_sem_take");
+        return MODEM_TIMEOUT;
+    }
+}
+
+bool modem_is_ready(void)
+{
+    modem_write("AT+CGPADDR\r\n");
+
+    if (modem_get_result(1500) != MODEM_OK)
+    {
+        return false;
+    }
+
+    struct modem_result result;
+    if (!modem_read(&result))
+    {
+        LOG_ERR("Unable to read result from modem");
+        return false;
+    }
+
+    char *endstr = NULL;
+    char *ptr = result.buffer;
+    // String should contain +CGPADDR: 0,"<ip>"
+    while (*ptr)
+    {
+        if (*ptr == ',')
+        {
+            endstr = ptr + 1;
+            break;
+        }
+        ptr++;
+    }
+
+    if (!endstr || !*ptr)
+    {
+        // No address here
+        return false;
+    }
+
+    // This bit might be omitted if the (local) address isn't used.
+
+    // Remove the quotation marks
+    endstr++;
+    ptr = endstr;
+    while (*ptr)
+    {
+        if (*ptr == '"')
+        {
+            *ptr = 0;
+            break;
+        }
+        ptr++;
+    }
+
+    // Won't do anything with the address here. Just print it. Might be nice to
+    // store it somewhere but there's really no use for it in the firmware. Yet.
+    LOG_INF("Address: %s", log_strdup(endstr));
+
+    return true;
 }

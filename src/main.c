@@ -25,12 +25,11 @@ LOG_MODULE_REGISTER(app);
 
 #include "comms.h"
 
+/*
 static const char *message = "Hello there";
 
-#define MAX_RESP_SIZE 256
-static char resp[MAX_RESP_SIZE];
-
 static char buf_copy[256];
+
 static void send_command(const char *buf, s32_t timeout)
 {
     size_t len = strlen(buf);
@@ -40,20 +39,20 @@ static void send_command(const char *buf, s32_t timeout)
 
     modem_write(buf);
     k_sleep(K_MSEC(timeout));
-
-    int read = modem_read(resp, MAX_RESP_SIZE, K_MSEC(timeout));
-    if (read == 0)
-    {
-        LOG_DBG("0 bytes returned");
-        return;
-    }
-    resp[read] = 0;
-}
+}*/
 
 void main(void)
 {
-    init_comms();
+    modem_init();
 
+    modem_restart();
+
+    while (!modem_is_ready())
+    {
+        LOG_INF("Waiting for modem...");
+        k_sleep(K_MSEC(2000));
+    }
+    /*
     LOG_DBG("Sending packet (%s)", message);
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -109,11 +108,11 @@ void main(void)
 
     // send_command("AT+CGDCONT?\r\n", 1500);
 
-    while (true)
+    for (int i = 0; i < 5; i++)
     {
         k_sleep(K_MSEC(30000));
         send_command("AT+CGPADDR\r\n", 1500);
     }
-
+*/
     LOG_DBG("Halting firmware");
 }
