@@ -25,21 +25,7 @@ LOG_MODULE_REGISTER(app);
 
 #include "comms.h"
 
-/*
 static const char *message = "Hello there";
-
-static char buf_copy[256];
-
-static void send_command(const char *buf, s32_t timeout)
-{
-    size_t len = strlen(buf);
-    memcpy(buf_copy, buf, len);
-    buf_copy[len - 2] = 0;
-    LOG_DBG("Sent: %s", log_strdup(buf_copy));
-
-    modem_write(buf);
-    k_sleep(K_MSEC(timeout));
-}*/
 
 void main(void)
 {
@@ -52,7 +38,7 @@ void main(void)
         LOG_INF("Waiting for modem...");
         k_sleep(K_MSEC(2000));
     }
-    /*
+
     LOG_DBG("Sending packet (%s)", message);
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -77,9 +63,10 @@ void main(void)
         close(sock);
         return;
     }
-
+    LOG_DBG("Closing shit");
     close(sock);
 
+    /*
     LOG_DBG("Enter send loop");
 
     k_sleep(K_MSEC(500));

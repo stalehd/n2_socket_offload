@@ -46,7 +46,7 @@ bool modem_read(struct modem_result *result)
     struct modem_result *rx;
 
     rx = k_fifo_get(&results, K_NO_WAIT);
-    if (!result)
+    if (!rx)
     {
         return false;
     }
@@ -95,6 +95,7 @@ static void flush_stale_results()
         stale_result = k_fifo_get(&results, K_NO_WAIT);
         if (stale_result)
         {
+            LOG_WRN("Flushing stale results from old command");
             k_free(stale_result);
         }
     } while (stale_result);
@@ -158,6 +159,7 @@ static bool process_urc(const char *buffer)
  */
 static void process_line(const char *buffer, const size_t length)
 {
+    //LOG_DBG("Process: %s", log_strdup(buffer));
     if (length == 0)
     {
         LOG_ERR("Length = 0 for data");
@@ -184,7 +186,7 @@ static void process_line(const char *buffer, const size_t length)
         return;
     }
 
-    LOG_INF("Received: %s", log_strdup(buffer));
+    LOG_DBG("Received: %s", log_strdup(buffer));
     // I'm not checking the return from k_malloc since this will just panic
     // which is more or less what we want if we run out of heap.
     struct modem_result *new_item = k_malloc(sizeof(struct modem_result));
@@ -232,7 +234,7 @@ void modem_rx_thread(void)
         }
     }
 }
-#define RX_THREAD_STACK 500
+#define RX_THREAD_STACK 1024
 #define RX_THREAD_PRIORITY 5
 
 /* RX thread structures */
@@ -285,7 +287,7 @@ int modem_get_result(s32_t timeout)
     switch (k_sem_take(&ready_sem, timeout))
     {
     case 0:
-        return MODEM_OK;
+        return last_result;
     case -EBUSY:
         return MODEM_TIMEOUT;
     case -EAGAIN:

@@ -26,7 +26,6 @@ LOG_MODULE_REGISTER(sara_n2);
 struct n2_socket
 {
     int id;
-    int modem_id;
     bool connected;
     struct sockaddr *addr;
     int local_port;
@@ -36,18 +35,13 @@ struct n2_socket
     ssize_t remote_len;
 };
 
-int create_socket_on_modem(int port)
-{
-    return -1;
-}
-
 static struct n2_socket sockets[MDM_MAX_SOCKETS];
 static int next_free_socket = 0;
-static int next_free_port = 0;
+static int next_free_port = 6000;
 
 static bool is_valid_socket(int sock_fd)
 {
-    if (sockets[sock_fd].id)
+    if (sockets[sock_fd].id >= 0)
     {
         return true;
     }
@@ -58,7 +52,6 @@ static bool is_valid_socket(int sock_fd)
 static char modem_command_buffer[CMD_BUFFER_SIZE];
 
 #define CMD_TIMEOUT 1500
-static struct modem_result mdm_result;
 
 static int offload_socket(int family, int type, int proto)
 {
@@ -81,36 +74,30 @@ static int offload_socket(int family, int type, int proto)
     }
     int fd = next_free_socket;
     next_free_socket++;
-    sockets[fd].id = next_free_socket;
     sockets[fd].local_port = next_free_port;
     next_free_port++;
 
-    /*
     sprintf(modem_command_buffer, "AT+NSOCR=\"DGRAM\",17,%d,1\r\n", sockets[fd].local_port);
     modem_write(modem_command_buffer);
-
-    if (modem_read_line(&mdm_result, CMD_TIMEOUT) == 0)
+    if (modem_get_result(CMD_TIMEOUT) != MODEM_OK)
     {
-        LOG_ERR("Unable to read from modem");
-        return -ENOMEM;
-        // TODO: Panic, reset modem or something clever. If reset then drop all sockets
-    }
-    if (!mdm_result.success)
-    {
-        LOG_ERR("Unable to create socket on modem");
+        LOG_ERR("Unable to create socket. Did not get OK from modem on NSOCR");
         return -ENOMEM;
     }
-
-    sockets[fd].modem_id = atoi(mdm_result.buffer);
-    LOG_DBG("Created socket. fd = %d, modem fd = %d, local port = %d", fd, sockets[fd].modem_id, sockets[fd].local_port);
-*/
+    struct modem_result result;
+    if (!modem_read(&result))
+    {
+        LOG_ERR("Unable to read socket fd from modem");
+        return -ENOMEM;
+    }
+    sockets[fd].id = atoi(result.buffer);
+    LOG_DBG("Created socket. fd = %d, modem fd = %d, local port = %d", fd, sockets[fd].id, sockets[fd].local_port);
     return fd;
 }
 
 static void clear_socket(int sock_fd)
 {
-    sockets[sock_fd].id = 0;
-    sockets[sock_fd].modem_id = 0;
+    sockets[sock_fd].id = -1;
     sockets[sock_fd].connected = false;
     sockets[sock_fd].local_port = 0;
     sockets[sock_fd].incoming_len = 0;
@@ -135,25 +122,14 @@ static int offload_close(int sock_fd)
     {
         return -EINVAL;
     }
-    sockets[sock_fd].id = 0;
-    /*
-    sprintf(modem_command_buffer, "AT+NSOCL=%d\r\n", sockets[sock_fd].modem_id);
+    sprintf(modem_command_buffer, "AT+NSOCL=%d\r\n", sockets[sock_fd].id);
     modem_write(modem_command_buffer);
 
-    if (modem_read_line(&mdm_result, CMD_TIMEOUT) == 0)
+    if (modem_get_result(CMD_TIMEOUT) != MODEM_OK)
     {
-        LOG_ERR("Unable to read from modem when closing socket");
         return -ENOMEM;
     }
-
-    if (!mdm_result.success)
-    {
-        LOG_ERR("Unable to close socket on modem");
-        return -ENOMEM;
-    }
-
     clear_socket(sock_fd);
-    return 0;*/
     return 0;
 }
 
@@ -273,6 +249,8 @@ static ssize_t offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
     return read_incoming_data(sock_fd, buf, max_len);
 }
 
+#define TO_HEX(i) (i <= 9 ? '0' + i : 'A' - 10 + i)
+
 static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
                               int flags, const struct sockaddr *to,
                               socklen_t tolen)
@@ -305,9 +283,57 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
         // couldn't read address. Bail out
         return -EINVAL;
     }
-    LOG_DBG("Address: %s", log_strdup(addr));
-    LOG_DBG("Port: %d", ntohs(toaddr->sin_port));
-    LOG_DBG("Send command: AT+NSOST=%d,[addr],[port],[len],[hex]", sockets[sock_fd].id);
+    sprintf(modem_command_buffer,
+            "AT+NSOST=%d,\"%s\",%d,%d,\"",
+            sockets[sock_fd].id, addr,
+            ntohs(toaddr->sin_port),
+            len);
+
+    modem_write(modem_command_buffer);
+
+    for (int i = 0; i < len; i++)
+    {
+        char byte[3];
+
+        byte[0] = TO_HEX((((const char *)buf)[i] >> 4));
+        byte[1] = TO_HEX((((const char *)buf)[i] & 0xF));
+        byte[2] = 0;
+        modem_write(byte);
+    }
+
+    modem_write("\"\r\n");
+
+    if (modem_get_result(CMD_TIMEOUT) != MODEM_OK)
+    {
+        LOG_ERR("Error sending AT+NSOST to modem");
+        return -ENOMEM;
+    }
+
+    struct modem_result result;
+    // Read back the result ([fd],[length])
+    if (!modem_read(&result))
+    {
+        LOG_ERR("Unable to read result from AT+NSOST");
+        return -ENOMEM;
+    }
+
+    // This is just to make certain. If the modem says "OK" we should trust it
+    // ....I think.
+    char *count = NULL;
+    char *ptr = result.buffer;
+    while (*ptr)
+    {
+        if (*ptr == ',')
+        {
+            *ptr = 0;
+            count = ptr + 1;
+            break;
+        }
+        ptr++;
+    }
+
+    LOG_DBG("Wrote %d bytes to socket %d/%d. Result says fd = %s, len = %s",
+            len, sock_fd, sockets[sock_fd].id, log_strdup(result.buffer), log_strdup(count));
 
     return len;
 }
@@ -361,6 +387,13 @@ static struct net_offload offload_funcs = {
 static void offload_iface_init(struct net_if *iface)
 {
     LOG_DBG("offload_iface_init");
+    for (int i = 0; i < MDM_MAX_SOCKETS; i++)
+    {
+        sockets[i].id = -1;
+        sockets[i].addr = NULL;
+        sockets[i].incoming = NULL;
+        sockets[i].remote_addr = NULL;
+    }
     iface->if_dev->offload = &offload_funcs;
     socket_offload_register(&n2_socket_offload);
 }
@@ -378,8 +411,8 @@ static int n2_init(struct device *dev)
     LOG_DBG("Send command: AT+CGDCONT=0,\"IP\",\"mda.ee\"");
     LOG_DBG("Send command: AT+CFUN=1");
     LOG_DBG("Wait for IP address");
-    k_sleep(3000);
-    LOG_DBG("n2_init completed");
+    // k_sleep(3000);
+    //LOG_DBG("n2_init completed");
     return 0;
 }
 
