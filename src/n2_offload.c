@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2018 Foundries.io
  *
- * SPDX-License-Identifier: Apache-2.0
+ß * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <logging/log.h>
@@ -19,6 +19,7 @@ LOG_MODULE_REGISTER(sara_n2);
 
 #include "config.h"
 #include "comms.h"
+#include "at_commands.h"
 
 // The maximum number of sockets in SARA N2 is 7
 #define MDM_MAX_SOCKETS 7
@@ -27,9 +28,8 @@ struct n2_socket
 {
     int id;
     bool connected;
-    struct sockaddr *addr;
+    //    struct sockaddr *addr;
     int local_port;
-    uint8_t *incoming;
     ssize_t incoming_len;
     struct sockaddr *remote_addr;
     ssize_t remote_len;
@@ -57,14 +57,6 @@ static void clear_socket(int sock_fd)
     sockets[sock_fd].local_port = 0;
     sockets[sock_fd].incoming_len = 0;
     sockets[sock_fd].remote_len = 0;
-    if (sockets[sock_fd].addr)
-    {
-        k_free(sockets[sock_fd].addr);
-    }
-    if (sockets[sock_fd].incoming)
-    {
-        k_free(sockets[sock_fd].incoming);
-    }
     if (sockets[sock_fd].remote_addr)
     {
         k_free(sockets[sock_fd].remote_addr);
@@ -107,61 +99,30 @@ static int offload_connect(int sock_fd, const struct sockaddr *addr,
     return 0;
 }
 
-//TODO: Implement
 static int offload_poll(struct pollfd *fds, int nfds, int msecs)
 {
     if (nfds != 1)
     {
         return -EINVAL;
     }
-    if (!VALID_SOCKET(fds[0].fd))
+    for (int i = 0; i < nfds; i++)
     {
-        return -EINVAL;
+        if (!VALID_SOCKET(fds[i].fd))
+        {
+            fds[i].revents = POLLNVAL;
+            continue;
+        }
+        if ((POLLIN & fds[i].events) == POLLIN)
+        {
+            if (sockets[fds[i].fd].incoming_len > 0)
+            {
+                fds[i].revents |= POLLIN;
+            }
+        }
     }
-    // Check if there's incoming data from the socket. Only use POLLIN
-    return -ENOTSUP;
+    return 0;
 }
 
-static ssize_t read_incoming_data(int sock_fd, void *buf, short int len)
-{
-    ssize_t return_len = sockets[sock_fd].incoming_len;
-    if (len < sockets[sock_fd].incoming_len)
-    {
-        return_len = len;
-    }
-
-    if (len > sockets[sock_fd].incoming_len)
-    {
-        return_len = sockets[sock_fd].incoming_len;
-    }
-
-    memcpy(buf, sockets[sock_fd].incoming, return_len);
-
-    sockets[sock_fd].incoming_len -= return_len;
-
-    uint8_t *remaining_buf = NULL;
-    ssize_t remaining = (sockets[sock_fd].incoming_len - return_len);
-
-    if (remaining > 0)
-    {
-        remaining_buf = k_malloc(remaining);
-        memcpy(remaining_buf, sockets[sock_fd].incoming + len, remaining);
-    }
-    k_free(sockets[sock_fd].incoming);
-    sockets[sock_fd].incoming = remaining_buf;
-    sockets[sock_fd].incoming_len = remaining;
-
-    if (sockets[sock_fd].incoming_len == 0)
-    {
-        // clear buffers
-        k_free(sockets[sock_fd].remote_addr);
-        sockets[sock_fd].remote_addr = NULL;
-        sockets[sock_fd].remote_len = 0;
-    }
-    return return_len;
-}
-
-// TODO: Implement
 static ssize_t offload_recvfrom(int sock_fd, void *buf, short int len,
                                 short int flags, struct sockaddr *from,
                                 socklen_t *fromlen)
@@ -173,28 +134,20 @@ static ssize_t offload_recvfrom(int sock_fd, void *buf, short int len,
         return -EINVAL;
     }
 
-    //TODO: modem_poll_incoming(sockers[sock_fd].id,
-    //   sockets[sock_fd].incoming,
-    //   sockets[sock_fd].incoming_len,
-    //   sockets[sock_fd].remote_addr,
-    //   sockets[sock_fd].remote_len);
-
-    if (!sockets[sock_fd].incoming)
+    if (!sockets[sock_fd].incoming_len)
     {
         // no data waiting
-        return 0;
     }
-    if (from && fromlen)
+    // Use NSORF to read incoming data.
+    sprintf(modem_command_buffer, "AT+NSORF=%d,%d\r\n", sockets[sock_fd].id, len);
+    modem_write(modem_command_buffer);
+
+    if (modem_get_result(CMD_TIMEOUT) != MODEM_OK)
     {
-        if (*fromlen < sockets[sock_fd].remote_len)
-        {
-            // not enough room for socket address
-            return -EINVAL;
-        }
-        memcpy(from, sockets[sock_fd].remote_addr, sockets[sock_fd].remote_len);
-        *fromlen = sockets[sock_fd].remote_len;
+        LOG_ERR("Unable read data from device.");
+        return -ENOMEM;
     }
-    return read_incoming_data(sock_fd, buf, len);
+    return atnsorf_decode(buf, len, from, fromlen);
 }
 
 static ssize_t offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
@@ -393,8 +346,6 @@ static void offload_iface_init(struct net_if *iface)
     for (int i = 0; i < MDM_MAX_SOCKETS; i++)
     {
         sockets[i].id = -1;
-        sockets[i].addr = NULL;
-        sockets[i].incoming = NULL;
         sockets[i].remote_addr = NULL;
     }
     iface->if_dev->offload = &offload_funcs;
@@ -405,6 +356,16 @@ static struct net_if_api api_funcs = {
     .init = offload_iface_init,
 };
 
+static void receive_cb(int fd, size_t bytes)
+{
+    for (int i = 0; i < MDM_MAX_SOCKETS; i++)
+    {
+        if (sockets[i].id == fd)
+        {
+            sockets[i].incoming_len += bytes;
+        }
+    }
+}
 // _init initializes the network offloading
 static int n2_init(struct device *dev)
 {
@@ -416,6 +377,7 @@ static int n2_init(struct device *dev)
     LOG_DBG("Wait for IP address");
     // k_sleep(3000);
     //LOG_DBG("n2_init completed");
+    modem_receive_callback(receive_cb);
     return 0;
 }
 

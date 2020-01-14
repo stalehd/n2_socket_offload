@@ -37,6 +37,9 @@ struct k_fifo results;
 
 static struct device *uart_dev;
 
+// Callback for receive notifications
+static receive_callback_t receive_callback = NULL;
+
 /*
  * Modem comms. It's quite a mechanism - the UART is read from an ISR, then
  * sent to a processing thread via a ring buffer. The processing thread
@@ -133,6 +136,10 @@ static bool process_urc(const char *buffer)
     if (strncmp("+NSOMNI", buffer, 7) == 0)
     {
         LOG_DBG("Input data URC: %s", log_strdup(buffer));
+        // TODO: Extract socket descriptor and number of bytes, signal to client
+        int fd = 1;
+        size_t bytes = 100;
+        receive_callback(fd, bytes);
         return true;
     }
     if (strncmp("+NPSMR", buffer, 6) == 0)
@@ -203,8 +210,9 @@ static void process_line(const char *buffer, const size_t length)
  */
 void modem_rx_thread(void)
 {
+#define MAX_LINE_LENGTH 256
     char prev = ' ', cur = ' ';
-    char current_line[256];
+    char current_line[MAX_LINE_LENGTH];
     size_t current_index = 0;
     while (true)
     {
@@ -212,7 +220,7 @@ void modem_rx_thread(void)
         // read single chars into ring buffer and split on CR LF
         if (ring_buf_get(&rx_rb, &cur, 1))
         {
-            if (cur == '\n' && prev == '\r')
+            if ((cur == '\n' && prev == '\r') || current_index == MAX_LINE_LENGTH)
             {
                 // this is a new line, process the current line and clear it
                 if (current_index != 0)
@@ -355,4 +363,9 @@ bool modem_is_ready(void)
     LOG_INF("Address: %s", log_strdup(endstr));
 
     return true;
+}
+
+void modem_receive_callback(receive_callback_t recv_cb)
+{
+    receive_callback = recv_cb;
 }

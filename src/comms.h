@@ -55,12 +55,16 @@ void modem_restart(void);
  */
 bool modem_is_ready(void);
 
-// TODO: implement a modem_begin() modem_end() to signal start and stop writes.
-// The URC for incoming data requires access to the modem exclusively to avoid
-// stepping on each others toes. There's added complexity wrt the receive queue
-// so we should make sure that the queue is empty before doing the requisite
-// NSORF command after the NSOMNI URC. Unfortunately the returned data is not
-// in URC format so we can't filter it out in the background.
-//
-//int modem_get_urc_data(int fd, void *buf, size_t *len, char *remote_address, int remote_port);
+/**
+ * @brief Callback for receive notifications.
+ */
+typedef void (*receive_callback_t)(int fd, size_t bytes);
+
+/**
+ * @brief Set callback function for new data notifications. This function is
+ *        called whenever a +NSOMNI message is received from the modem.
+ * @note  Only a single callback can be registered.
+ */
+void modem_receive_callback(receive_callback_t receive_cb);
+
 #endif

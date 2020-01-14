@@ -63,8 +63,31 @@ void main(void)
         close(sock);
         return;
     }
-    LOG_DBG("Closing shit");
+
+    LOG_DBG("Sent message, waiting for downstream");
+    while (true)
+    {
+// Wait for response
+#define BUF_LEN 128
+        u8_t buffer[BUF_LEN];
+        memset(buffer, 0, BUF_LEN);
+        struct sockaddr_in *addr;
+        socklen_t addrlen;
+        int err = recvfrom(sock, buffer, BUF_LEN, 0, (struct sockaddr *)&addr, &addrlen);
+        if (err < 0)
+        {
+            LOG_ERR("Error receiving: %d", err);
+            break;
+        }
+        if (err > 0)
+        {
+            LOG_DBG("Got data (%d bytes): %s", err, log_strdup(buffer));
+        }
+        k_sleep(K_MSEC(1000));
+    }
     close(sock);
+
+    // OK - great success. Now use CoAP to POST to the backend.
 
     /*
     LOG_DBG("Enter send loop");
