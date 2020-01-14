@@ -5,7 +5,7 @@
  */
 
 #include <logging/log.h>
-#define LOG_LEVEL LOG_LEVEL_DBG
+#define LOG_LEVEL LOG_LEVEL_N2
 LOG_MODULE_REGISTER(sara_n2);
 #include <stdbool.h>
 #include <zephyr/types.h>
@@ -231,23 +231,6 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
         LOG_ERR("Unable to read result from AT+NSOST");
         return -ENOMEM;
     }
-
-    /*
-    // This is just to make certain. If the modem says "OK" we should trust it
-    // ....I think.
-    char *count = NULL;
-    char *ptr = result.buffer;
-    while (*ptr)
-    {
-        if (*ptr == ',')
-        {
-            *ptr = 0;
-            count = ptr + 1;
-            break;
-        }
-        ptr++;
-    }
-    */
 
     return len;
 }

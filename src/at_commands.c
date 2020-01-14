@@ -1,5 +1,5 @@
 #include <logging/log.h>
-#define LOG_LEVEL LOG_LEVEL_DBG
+#define LOG_LEVEL LOG_LEVEL_N2
 LOG_MODULE_REGISTER(n2_decoder);
 
 #include "at_commands.h"

@@ -65,7 +65,8 @@ void main(void)
     }
 
     LOG_DBG("Sent message, waiting for downstream");
-    while (true)
+    bool received = false;
+    while (!received)
     {
 // Wait for response
 #define BUF_LEN 128
@@ -82,6 +83,7 @@ void main(void)
         if (err > 0)
         {
             LOG_DBG("Got data (%d bytes): %s", err, log_strdup(buffer));
+            received = true;
         }
         k_sleep(K_MSEC(1000));
     }
@@ -89,40 +91,5 @@ void main(void)
 
     // OK - great success. Now use CoAP to POST to the backend.
 
-    /*
-    LOG_DBG("Enter send loop");
-
-    k_sleep(K_MSEC(500));
-
-    // Turn on signalling status
-    send_command("AT+CEREG=1\r\n", 1500);
-
-    send_command("AT+NPSMR=1\r\n", 1500);
-
-    send_command("AT+CFUN=0\r\n", 1500);
-
-    send_command("AT+CGDCONT=0,\"IP\",\"mda.ee\"\r\n", 1500);
-
-    send_command("AT+NCONFIG=\"AUTOCONNECT\",\"TRUE\"\r\n", 1500);
-
-    send_command("AT+CFUN=1\r\n", 1500);
-
-    // Attach the terminal
-    send_command("AT+CGATT=1\r\n", 5000);
-
-    send_command("AT+CIMI\r\n", 1500);
-
-    send_command("AT+CGSN=1\r\n", 1500);
-
-    send_command("AT+NCONFIG?\r\n", 2500);
-
-    // send_command("AT+CGDCONT?\r\n", 1500);
-
-    for (int i = 0; i < 5; i++)
-    {
-        k_sleep(K_MSEC(30000));
-        send_command("AT+CGPADDR\r\n", 1500);
-    }
-*/
     LOG_DBG("Halting firmware");
 }

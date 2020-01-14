@@ -1,6 +1,6 @@
 #include "config.h"
 #include <logging/log.h>
-#define LOG_LEVEL APP_LOG_LEVEL
+#define LOG_LEVEL LOG_LEVEL_N2
 LOG_MODULE_REGISTER(comms);
 
 #include <zephyr.h>
@@ -84,7 +84,7 @@ static void flush_stale_results()
         stale_result = k_fifo_get(&results, K_NO_WAIT);
         if (stale_result)
         {
-            LOG_WRN("Flushing stale results from old command");
+            LOG_DBG("Flushing stale results from old command");
             k_free(stale_result);
         }
     } while (stale_result);
@@ -272,7 +272,7 @@ void modem_init(void)
     }
     uart_irq_callback_user_data_set(uart_dev, uart_isr, uart_dev);
     uart_irq_rx_enable(uart_dev);
-    LOG_INF("UART device loaded.");
+    LOG_DBG("UART device loaded.");
 }
 
 void modem_restart(void)
@@ -360,7 +360,7 @@ bool modem_is_ready(void)
 
     // Won't do anything with the address here. Just print it. Might be nice to
     // store it somewhere but there's really no use for it in the firmware. Yet.
-    LOG_INF("Address: %s", log_strdup(endstr));
+    LOG_DBG("Address: %s", log_strdup(endstr));
 
     return true;
 }
