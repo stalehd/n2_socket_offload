@@ -103,6 +103,7 @@ static int offload_poll(struct pollfd *fds, int nfds, int msecs)
 {
     if (nfds != 1)
     {
+        LOG_ERR("poll has invalid nfds: %d", nfds);
         return -EINVAL;
     }
     for (int i = 0; i < nfds; i++)
@@ -131,11 +132,13 @@ static ssize_t offload_recvfrom(int sock_fd, void *buf, short int len,
 
     if (!VALID_SOCKET(sock_fd))
     {
+        LOG_ERR("Invalid socket fd: %d", sock_fd);
         return -EINVAL;
     }
 
     if (!sockets[sock_fd].incoming_len)
     {
+        LOG_INF("No incoming data waiting on socket %d", sock_fd);
         // no data waiting
     }
     // Use NSORF to read incoming data.
@@ -156,6 +159,7 @@ static ssize_t offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
 
     if (!VALID_SOCKET(sock_fd))
     {
+        LOG_ERR("Invalid socket fd: %d", sock_fd);
         return -EINVAL;
     }
 
@@ -163,6 +167,7 @@ static ssize_t offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
     {
         return -EINVAL;
     }
+    LOG_INF("Receiving via recvfrom");
     return offload_recvfrom(sock_fd, buf, max_len, flags, NULL, NULL);
 }
 
@@ -172,26 +177,19 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
 {
     if (!VALID_SOCKET(sock_fd))
     {
-        LOG_DBG("invalid socket fd. Can't sendto()");
+        LOG_ERR("Invalid socket fd: %d", sock_fd);
         return -EINVAL;
     }
 
     if (len > CONFIG_N2_MAX_PACKET_SIZE)
     {
-        LOG_DBG("Too long packet (%d). Can't sendto()", len);
-        return -EINVAL;
-    }
-
-    if (sockets[sock_fd].connected)
-    {
-        LOG_DBG("Socket is already connected");
+        LOG_ERR("Too long packet (%d). Can't sendto()", len);
         return -EINVAL;
     }
 
     struct sockaddr_in *toaddr = (struct sockaddr_in *)to;
 
     char addr[64];
-
     if (!inet_ntop(AF_INET, &toaddr->sin_addr, addr, 128))
     {
         LOG_ERR("Unable to convert address to string");
@@ -203,7 +201,6 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
             sockets[sock_fd].id, addr,
             ntohs(toaddr->sin_port),
             len);
-
     modem_write(modem_command_buffer);
 
     for (int i = 0; i < len; i++)
@@ -232,6 +229,7 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
         return -ENOMEM;
     }
 
+    LOG_INF("Sent %d bytes to %s", len, log_strdup(addr));
     return len;
 }
 
@@ -239,11 +237,12 @@ static ssize_t offload_send(int sock_fd, const void *buf, size_t len, int flags)
 {
     if (!VALID_SOCKET(sock_fd))
     {
-        LOG_DBG("Invalid socket. Can't send()");
+        LOG_ERR("Invalid socket fd: %d", sock_fd);
         return -EINVAL;
     }
     if (!sockets[sock_fd].connected)
     {
+        LOG_ERR("Socket not connected: (%d)", sock_fd);
         return -ENOTCONN;
     }
 
@@ -255,19 +254,23 @@ static int offload_socket(int family, int type, int proto)
 {
     if (family != AF_INET)
     {
+        LOG_ERR("Unsupported family (%d)", family);
         return -EAFNOSUPPORT;
     }
     if (type != SOCK_DGRAM)
     {
+        LOG_ERR("Unsupported type (%d)", type);
         return -ENOTSUP;
     }
     if (proto != IPPROTO_UDP)
     {
+        LOG_ERR("Unsupported proto (%d)", proto);
         return -ENOTSUP;
     }
 
     if (next_free_socket > MDM_MAX_SOCKETS)
     {
+        LOG_ERR("Max sockets in use");
         return -ENOMEM;
     }
     int fd = next_free_socket;
@@ -277,9 +280,15 @@ static int offload_socket(int family, int type, int proto)
 
     sprintf(modem_command_buffer, "AT+NSOCR=\"DGRAM\",17,%d,1\r\n", sockets[fd].local_port);
     modem_write(modem_command_buffer);
-    if (modem_get_result(CMD_TIMEOUT) != MODEM_OK)
+    switch (modem_get_result(CMD_TIMEOUT))
     {
-        LOG_ERR("Unable to create socket. Did not get OK from modem on NSOCR");
+    case MODEM_OK:
+        break;
+    case MODEM_ERROR:
+        LOG_ERR("Modem said ERROR when trying to create socket");
+        return -ENOMEM;
+    default:
+        LOG_ERR("Unable to create socket. Command timed out");
         return -ENOMEM;
     }
     struct modem_result result;
@@ -289,7 +298,7 @@ static int offload_socket(int family, int type, int proto)
         return -ENOMEM;
     }
     sockets[fd].id = atoi(result.buffer);
-    LOG_DBG("Created socket. fd = %d, modem fd = %d, local port = %d", fd, sockets[fd].id, sockets[fd].local_port);
+    LOG_INF("Created socket. fd = %d, modem fd = %d, local port = %d", fd, sockets[fd].id, sockets[fd].local_port);
     return fd;
 }
 
@@ -361,6 +370,15 @@ static int n2_init(struct device *dev)
     // k_sleep(3000);
     //LOG_DBG("n2_init completed");
     modem_receive_callback(receive_cb);
+
+    modem_init();
+    modem_restart();
+    LOG_INF("Waiting for modem to be ready...");
+    while (!modem_is_ready())
+    {
+        k_sleep(K_MSEC(2000));
+    }
+    LOG_INF("Modem is ready");
     return 0;
 }
 

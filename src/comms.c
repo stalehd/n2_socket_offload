@@ -1,6 +1,6 @@
 #include "config.h"
 #include <logging/log.h>
-#define LOG_LEVEL LOG_LEVEL_N2
+#define LOG_LEVEL LOG_LEVEL_WRN
 LOG_MODULE_REGISTER(comms);
 
 #include <zephyr.h>
@@ -13,7 +13,7 @@ LOG_MODULE_REGISTER(comms);
 #include "comms.h"
 
 // Ring buffer size
-#define RB_SIZE 512
+#define RB_SIZE 256
 
 // Underlying ring buffer
 static u8_t buffer[RB_SIZE];
@@ -93,7 +93,7 @@ static void flush_stale_results()
 void modem_write(const char *cmd)
 {
     flush_stale_results();
-
+    LOG_DBG("Write %d bytes: %s", strlen(cmd), log_strdup(cmd));
     u8_t *buf = (u8_t *)cmd;
     size_t data_size = strlen(cmd);
     do
@@ -135,7 +135,7 @@ static bool process_urc(const char *buffer)
     }
     if (strncmp("+NSOMNI", buffer, 7) == 0)
     {
-        LOG_DBG("Input data URC: %s", log_strdup(buffer));
+        LOG_INF("Input data URC: %s", log_strdup(buffer));
         // TODO: Extract socket descriptor and number of bytes, signal to client
         int fd = 1;
         size_t bytes = 100;
@@ -178,6 +178,7 @@ static void process_line(const char *buffer, const size_t length)
     {
         // Completed response successfully - make a new response buffer
         last_result = MODEM_OK;
+        LOG_INF("OK from modem");
         k_sem_give(&ready_sem);
         return;
     }
@@ -185,6 +186,7 @@ static void process_line(const char *buffer, const size_t length)
     {
         // Completed response with failure - make a new response buffer
         last_result = MODEM_ERROR;
+        LOG_INF("Error from modem");
         k_sem_give(&ready_sem);
         return;
     }
@@ -226,6 +228,7 @@ void modem_rx_thread(void)
                 if (current_index != 0)
                 {
                     current_line[current_index] = 0;
+                    LOG_INF("Got %d bytes from modem", current_index);
                     process_line(current_line, current_index);
                     current_index = 0;
                 }
@@ -243,8 +246,8 @@ void modem_rx_thread(void)
         }
     }
 }
-#define RX_THREAD_STACK 1024
-#define RX_THREAD_PRIORITY 5
+#define RX_THREAD_STACK 2048
+#define RX_THREAD_PRIORITY 10
 
 struct k_thread rx_thread;
 
@@ -262,7 +265,7 @@ void modem_init(void)
     k_thread_create(&rx_thread, rx_thread_stack,
                     K_THREAD_STACK_SIZEOF(rx_thread_stack),
                     (k_thread_entry_t)modem_rx_thread,
-                    NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
+                    NULL, NULL, NULL, K_PRIO_COOP(RX_THREAD_PRIORITY), 0, K_NO_WAIT);
 
     uart_dev = device_get_binding("UART_0");
     if (!uart_dev)

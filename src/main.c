@@ -24,21 +24,11 @@ LOG_MODULE_REGISTER(app);
 #include <net/socket.h>
 
 #include "comms.h"
+#include "fota.h"
 
 static const char *message = "Hello there";
-
-void main(void)
+void udpTest()
 {
-    modem_init();
-
-    modem_restart();
-
-    while (!modem_is_ready())
-    {
-        LOG_INF("Waiting for modem...");
-        k_sleep(K_MSEC(2000));
-    }
-
     LOG_DBG("Sending packet (%s)", message);
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -69,7 +59,7 @@ void main(void)
     while (!received)
     {
 // Wait for response
-#define BUF_LEN 128
+#define BUF_LEN 64
         u8_t buffer[BUF_LEN];
         memset(buffer, 0, BUF_LEN);
         struct sockaddr_in *addr;
@@ -92,4 +82,25 @@ void main(void)
     // OK - great success. Now use CoAP to POST to the backend.
 
     LOG_DBG("Halting firmware");
+}
+
+void fotaTest()
+{
+    // Initialize the application and run any self-tests before calling fota_init.
+    // Otherwise, if initialization or self-tests fail after an update, reboot the system and the previous firmware image will be used.
+
+    int ret = fota_init();
+    if (ret)
+    {
+        LOG_ERR("fota_init: %d", ret);
+        return;
+    }
+}
+
+void main(void)
+{
+
+    k_sleep(10000);
+
+    fotaTest();
 }
