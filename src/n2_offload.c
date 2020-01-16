@@ -5,7 +5,7 @@
  */
 
 #include <logging/log.h>
-#define LOG_LEVEL LOG_LEVEL_N2
+#define LOG_LEVEL LOG_LEVEL_DBG
 LOG_MODULE_REGISTER(sara_n2);
 #include <stdbool.h>
 #include <zephyr/types.h>
@@ -42,7 +42,7 @@ static int next_free_port = 6000;
 #define CMD_BUFFER_SIZE 32
 static char modem_command_buffer[CMD_BUFFER_SIZE];
 
-#define CMD_TIMEOUT 1500
+#define CMD_TIMEOUT 2000
 
 #define TO_HEX(i) (i <= 9 ? '0' + i : 'A' - 10 + i)
 #define VALID_SOCKET(s) (sockets[s].id >= 0)
@@ -65,6 +65,7 @@ static void clear_socket(int sock_fd)
 
 static int offload_close(int sock_fd)
 {
+    LOG_DBG("close()");
     if (!VALID_SOCKET(sock_fd))
     {
         return -EINVAL;
@@ -72,17 +73,19 @@ static int offload_close(int sock_fd)
     sprintf(modem_command_buffer, "AT+NSOCL=%d\r\n", sockets[sock_fd].id);
     modem_write(modem_command_buffer);
 
-    if (modem_get_result(CMD_TIMEOUT) != MODEM_OK)
-    {
+    struct modem_result result;
+    if (!modem_read_and_no_error(&result, CMD_TIMEOUT)) {
         return -ENOMEM;
     }
     clear_socket(sock_fd);
+    LOG_DBG("close() end");
     return 0;
 }
 
 static int offload_connect(int sock_fd, const struct sockaddr *addr,
                            socklen_t addrlen)
 {
+    LOG_DBG("connect()");
     if (!VALID_SOCKET(sock_fd))
     {
         return -EINVAL;
@@ -96,11 +99,14 @@ static int offload_connect(int sock_fd, const struct sockaddr *addr,
     sockets[sock_fd].connected = true;
     sockets[sock_fd].remote_addr = k_malloc(addrlen);
     memcpy(sockets[sock_fd].remote_addr, addr, addrlen);
+    LOG_DBG("connect() end");
     return 0;
 }
 
 static int offload_poll(struct pollfd *fds, int nfds, int msecs)
 {
+//    LOG_DBG("poll()");
+    k_yield();
     if (nfds != 1)
     {
         LOG_ERR("poll has invalid nfds: %d", nfds);
@@ -121,6 +127,7 @@ static int offload_poll(struct pollfd *fds, int nfds, int msecs)
             }
         }
     }
+//    LOG_DBG("poll() end");
     return 0;
 }
 
@@ -128,6 +135,7 @@ static ssize_t offload_recvfrom(int sock_fd, void *buf, short int len,
                                 short int flags, struct sockaddr *from,
                                 socklen_t *fromlen)
 {
+    LOG_DBG("recvfrom()");
     ARG_UNUSED(flags);
 
     if (!VALID_SOCKET(sock_fd))
@@ -144,17 +152,15 @@ static ssize_t offload_recvfrom(int sock_fd, void *buf, short int len,
     // Use NSORF to read incoming data.
     sprintf(modem_command_buffer, "AT+NSORF=%d,%d\r\n", sockets[sock_fd].id, len);
     modem_write(modem_command_buffer);
-
-    if (modem_get_result(CMD_TIMEOUT) != MODEM_OK)
-    {
-        LOG_ERR("Unable read data from device.");
-        return -ENOMEM;
-    }
-    return atnsorf_decode(buf, len, from, fromlen);
+    k_yield();
+    ssize_t ret = atnsorf_decode(buf, len, from, fromlen);
+    LOG_DBG("recvfrom() end");
+    return ret;
 }
 
 static ssize_t offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
 {
+    LOG_DBG("recv()");
     ARG_UNUSED(flags);
 
     if (!VALID_SOCKET(sock_fd))
@@ -167,14 +173,16 @@ static ssize_t offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
     {
         return -EINVAL;
     }
-    LOG_INF("Receiving via recvfrom");
-    return offload_recvfrom(sock_fd, buf, max_len, flags, NULL, NULL);
+    ssize_t ret = offload_recvfrom(sock_fd, buf, max_len, flags, NULL, NULL);
+    LOG_DBG("recv() end");
+    return ret;
 }
 
 static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
                               int flags, const struct sockaddr *to,
                               socklen_t tolen)
 {
+    LOG_DBG("sendto()");
     if (!VALID_SOCKET(sock_fd))
     {
         LOG_ERR("Invalid socket fd: %d", sock_fd);
@@ -196,6 +204,7 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
         // couldn't read address. Bail out
         return -EINVAL;
     }
+    LOG_DBG("Start write");
     sprintf(modem_command_buffer,
             "AT+NSOST=%d,\"%s\",%d,%d,\"",
             sockets[sock_fd].id, addr,
@@ -215,26 +224,20 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
 
     modem_write("\"\r\n");
 
-    if (modem_get_result(CMD_TIMEOUT) != MODEM_OK)
-    {
-        LOG_ERR("Error sending AT+NSOST to modem");
-        return -ENOMEM;
-    }
-
     struct modem_result result;
     // Read back the result ([fd],[length])
-    if (!modem_read(&result))
+    if (!modem_read_and_no_error(&result, CMD_TIMEOUT))
     {
-        LOG_ERR("Unable to read result from AT+NSOST");
+        LOG_ERR("Got error when issuing AT+NSOST command");
         return -ENOMEM;
     }
-
-    LOG_INF("Sent %d bytes to %s", len, log_strdup(addr));
+    LOG_INF("sendto() end: Sent %d bytes to %s", len, log_strdup(addr));
     return len;
 }
 
 static ssize_t offload_send(int sock_fd, const void *buf, size_t len, int flags)
 {
+    LOG_DBG("send()");
     if (!VALID_SOCKET(sock_fd))
     {
         LOG_ERR("Invalid socket fd: %d", sock_fd);
@@ -246,12 +249,15 @@ static ssize_t offload_send(int sock_fd, const void *buf, size_t len, int flags)
         return -ENOTCONN;
     }
 
-    return offload_sendto(sock_fd, buf, len, flags,
-                          sockets[sock_fd].remote_addr, sockets[sock_fd].remote_len);
+    ssize_t ret = offload_sendto(sock_fd, buf, len, flags,
+                                 sockets[sock_fd].remote_addr, sockets[sock_fd].remote_len);
+    LOG_DBG("send() end");
+    return ret;
 }
 
 static int offload_socket(int family, int type, int proto)
 {
+    LOG_DBG("socket()");
     if (family != AF_INET)
     {
         LOG_ERR("Unsupported family (%d)", family);
@@ -280,25 +286,15 @@ static int offload_socket(int family, int type, int proto)
 
     sprintf(modem_command_buffer, "AT+NSOCR=\"DGRAM\",17,%d,1\r\n", sockets[fd].local_port);
     modem_write(modem_command_buffer);
-    switch (modem_get_result(CMD_TIMEOUT))
-    {
-    case MODEM_OK:
-        break;
-    case MODEM_ERROR:
-        LOG_ERR("Modem said ERROR when trying to create socket");
-        return -ENOMEM;
-    default:
-        LOG_ERR("Unable to create socket. Command timed out");
-        return -ENOMEM;
-    }
+
     struct modem_result result;
-    if (!modem_read(&result))
+    if (!modem_read_and_no_error(&result, CMD_TIMEOUT))
     {
         LOG_ERR("Unable to read socket fd from modem");
         return -ENOMEM;
     }
     sockets[fd].id = atoi(result.buffer);
-    LOG_INF("Created socket. fd = %d, modem fd = %d, local port = %d", fd, sockets[fd].id, sockets[fd].local_port);
+    LOG_INF("socket() end: Created socket. fd = %d, modem fd = %d, local port = %d", fd, sockets[fd].id, sockets[fd].local_port);
     return fd;
 }
 
@@ -350,6 +346,7 @@ static struct net_if_api api_funcs = {
 
 static void receive_cb(int fd, size_t bytes)
 {
+    LOG_INF("Received %d bytes from socket %d", bytes, fd);
     for (int i = 0; i < MDM_MAX_SOCKETS; i++)
     {
         if (sockets[i].id == fd)
@@ -362,13 +359,6 @@ static void receive_cb(int fd, size_t bytes)
 static int n2_init(struct device *dev)
 {
     ARG_UNUSED(dev);
-    // TODO: Set up the threads et al here.
-    LOG_DBG("Send command: AT+CFUN=0");
-    LOG_DBG("Send command: AT+CGDCONT=0,\"IP\",\"mda.ee\"");
-    LOG_DBG("Send command: AT+CFUN=1");
-    LOG_DBG("Wait for IP address");
-    // k_sleep(3000);
-    //LOG_DBG("n2_init completed");
     modem_receive_callback(receive_cb);
 
     modem_init();

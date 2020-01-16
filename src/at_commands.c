@@ -13,6 +13,11 @@ LOG_MODULE_REGISTER(n2_decoder);
 
 #define FROM_HEX(x) (x - '0' > 9 ? x - 'A' + 10 : x - '0')
 
+// Timeout on AT+NSORF command. The command can return up to 512 * 2 = 1024 bytes
+// of data from the modem. The baud rate for N2 is just 9600 bauds, a little over
+// 1 KBs
+#define NSORF_TIMEOUT 2000
+
 /**
  * @brief read response NSORF from the modem. This is done (almost) byte by byte
  *        to save memory. The response might be split into several lines if the
@@ -31,7 +36,7 @@ int atnsorf_decode(u8_t *buffer, size_t len, struct sockaddr *from, socklen_t *f
     {
         *fromlen = sizeof(struct sockaddr_in);
     }
-    while (modem_read(&result) && received <= len)
+    while (modem_read_and_no_error(&result, NSORF_TIMEOUT) && received <= len)
     {
         for (int ch = 0; ch < strlen(result.buffer); ch++)
         {

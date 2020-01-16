@@ -1,5 +1,4 @@
-#ifndef APP_COMMS_H
-#define APP_COMMS_H
+#pragma once
 
 #define UART_COMMS 1
 //#define I2C_COMMS 1
@@ -7,21 +6,11 @@
 // Length of output buffer in result commands. 128 might be on the short side
 #define RESULT_BUFFER_SIZE 128
 
-#define MODEM_ERROR 0
-#define MODEM_TIMEOUT -1
-#define MODEM_OK (1)
-
 struct modem_result
 {
     void *fifo_reserved; // This is reserved for the FIFO
     char buffer[RESULT_BUFFER_SIZE];
 };
-
-/**
- * @brief Wait for result from modem command
- * @retval Status code: MODEM_ERROR, MODEM_OK or MODEM_TIMEOUT
- */
-int modem_get_result(s32_t timeout);
 
 /**
  * @brief Writes a string to the modem.
@@ -37,7 +26,8 @@ void modem_write(const char *cmd);
  *        timeout: max time to wait for response
  * @retval True if a line is read
  */
-bool modem_read(struct modem_result *result);
+bool modem_read_and_no_error(struct modem_result *result, s32_t timeout);
+
 
 /**
  * @brief Initialize communications
@@ -67,4 +57,7 @@ typedef void (*receive_callback_t)(int fd, size_t bytes);
  */
 void modem_receive_callback(receive_callback_t receive_cb);
 
-#endif
+/**
+ * @brief Read a single character from the modem.
+ */
+int modem_read(u8_t *b, s32_t timeout);

@@ -1,5 +1,4 @@
-#ifndef _APP_CONFIG_H
-#define _APP_CONFIG_H
+#pragma once
 
 #define APP_LOG_LEVEL LOG_LEVEL_DBG
 #define LOG_LEVEL_N2 LOG_LEVEL_INF
@@ -14,4 +13,3 @@
 #define CONFIG_N2_INIT_PRIORITY 35
 #define CONFIG_N2_MAX_PACKET_SIZE 512
 
-#endif

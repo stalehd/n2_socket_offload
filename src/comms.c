@@ -1,6 +1,6 @@
 #include "config.h"
 #include <logging/log.h>
-#define LOG_LEVEL LOG_LEVEL_WRN
+#define LOG_LEVEL LOG_LEVEL_DBG
 LOG_MODULE_REGISTER(comms);
 
 #include <zephyr.h>
@@ -13,7 +13,7 @@ LOG_MODULE_REGISTER(comms);
 #include "comms.h"
 
 // Ring buffer size
-#define RB_SIZE 256
+#define RB_SIZE 128
 
 // Underlying ring buffer
 static u8_t buffer[RB_SIZE];
@@ -23,13 +23,6 @@ static struct ring_buf rx_rb;
 
 // Semaphore for incoming data
 static struct k_sem rx_sem;
-
-// Result semaphore. Taken by the modem_get_result and given by
-// the rx thread.
-static struct k_sem ready_sem;
-
-// Result from last query
-static int last_result;
 
 // Results queue. Each line is an element. The OK and ERROR
 // lines are not included.
@@ -93,25 +86,29 @@ static void flush_stale_results()
 void modem_write(const char *cmd)
 {
     flush_stale_results();
-    LOG_DBG("Write %d bytes: %s", strlen(cmd), log_strdup(cmd));
     u8_t *buf = (u8_t *)cmd;
     size_t data_size = strlen(cmd);
+//    LOG_DBG("Write %s", log_strdup(cmd));
     do
     {
         uart_poll_out(uart_dev, *buf++);
     } while (--data_size);
 }
 
-bool modem_read(struct modem_result *result)
+bool modem_read_and_no_error(struct modem_result *result, s32_t timeout)
 {
     struct modem_result *rx;
 
-    rx = k_fifo_get(&results, K_NO_WAIT);
+    rx = k_fifo_get(&results, timeout);
     if (!rx)
     {
         return false;
     }
-
+    // ERROR response is an error. There are no commands that return a result *and* ERROR
+    // so the ERROR response will be the first response.
+    if (strncmp(rx->buffer, "ERROR", 5) == 0) {
+        return false;
+    }
     strcpy(result->buffer, rx->buffer);
     k_free(rx);
     return true;
@@ -174,23 +171,6 @@ static void process_line(const char *buffer, const size_t length)
         return;
     }
 
-    if (strncmp(buffer, "OK", 2) == 0)
-    {
-        // Completed response successfully - make a new response buffer
-        last_result = MODEM_OK;
-        LOG_INF("OK from modem");
-        k_sem_give(&ready_sem);
-        return;
-    }
-    if (strncmp(buffer, "ERROR", 5) == 0)
-    {
-        // Completed response with failure - make a new response buffer
-        last_result = MODEM_ERROR;
-        LOG_INF("Error from modem");
-        k_sem_give(&ready_sem);
-        return;
-    }
-
     if (buffer[0] == '+' && process_urc(buffer))
     {
         return;
@@ -247,7 +227,7 @@ void modem_rx_thread(void)
     }
 }
 #define RX_THREAD_STACK 2048
-#define RX_THREAD_PRIORITY 10
+#define RX_THREAD_PRIORITY (CONFIG_NUM_COOP_PRIORITIES)
 
 struct k_thread rx_thread;
 
@@ -258,7 +238,6 @@ K_THREAD_STACK_DEFINE(rx_thread_stack,
 void modem_init(void)
 {
     k_sem_init(&rx_sem, 0, RB_SIZE);
-    k_sem_init(&ready_sem, 0, 1);
     k_fifo_init(&results);
     ring_buf_init(&rx_rb, RB_SIZE, buffer);
 
@@ -278,55 +257,48 @@ void modem_init(void)
     LOG_DBG("UART device loaded.");
 }
 
+#define REBOOT_TIMEOUT 5000
+
 void modem_restart(void)
 {
+    flush_stale_results();
     modem_write("AT+NRB\r\n");
-    switch (modem_get_result(5000))
-    {
-    case MODEM_OK:
-        flush_stale_results();
-        break;
-    case MODEM_ERROR:
-        LOG_ERR("Got error attempting to reboot modem");
-        break;
-    case MODEM_TIMEOUT:
-        LOG_ERR("Unable to reboot modem");
-        break;
-    }
-}
 
-int modem_get_result(s32_t timeout)
-{
-    switch (k_sem_take(&ready_sem, timeout))
-    {
-    case 0:
-        return last_result;
-    case -EBUSY:
-        return MODEM_TIMEOUT;
-    case -EAGAIN:
-        return MODEM_TIMEOUT;
-    default:
-        LOG_ERR("Unknown return code from k_sem_take");
-        return MODEM_TIMEOUT;
-    }
+    // Will just read and discard the results until OK or ERROR is received
+    struct modem_result *rx;
+
+
+    do {
+        rx = k_fifo_get(&results, REBOOT_TIMEOUT);
+        if (!rx)
+        {
+            return;
+        }
+
+        if (strncmp(rx->buffer, "ERROR", 5) == 0) {
+            k_free(rx);
+            LOG_ERR("AT+NRB returned error");
+            return;
+        }
+        if (rx->buffer[0] == 'O' && rx->buffer[1] == 'K') {
+            k_free(rx);
+            return;
+        }
+        k_free(rx);
+    } while (rx);
 }
 
 bool modem_is_ready(void)
 {
+    flush_stale_results();
     modem_write("AT+CGPADDR\r\n");
 
-    if (modem_get_result(1500) != MODEM_OK)
-    {
-        return false;
-    }
-
     struct modem_result result;
-    if (!modem_read(&result))
+    if (!modem_read_and_no_error(&result, 2500))
     {
-        LOG_ERR("Unable to read result from modem");
+        LOG_ERR("Modem did not respond on AT+CGPADDR command");
         return false;
     }
-
     char *endstr = NULL;
     char *ptr = result.buffer;
     // String should contain +CGPADDR: 0,"<ip>"
