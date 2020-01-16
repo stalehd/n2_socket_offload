@@ -6,10 +6,10 @@
 #include "comms.h"
 #define CMD_TIMEOUT 1500
 
-static at_callback_t cb = NULL;
+static at_callback_t recv_cb = NULL;
 
 void receive_callback(at_callback_t receive_cb) {
-    cb = receive_cb;
+    recv_cb = receive_cb;
 }
 
 // Ring buffer size. The ring buffer holds just enough bytes to detect the
@@ -71,26 +71,46 @@ int decode_input(void *ctx, char_callback_t char_cb, eol_callback_t eol_cb) {
     int32_t timeout = CMD_TIMEOUT;
     uint8_t b, prev = ' ';
     bool is_urc = false;
+    bool receive_notification = false;
+    // data may be n,nnn
+    char receive_count[5];
+    int idx = 0;
+
+    memset(receive_count, 0, sizeof(receive_count));
+
+    uint8_t receive_idx = 0;
     while (modem_read(&b, timeout) == 0) {
         if (b == '+' && rb.size == 0) {
             is_urc = true;
         }
         b_add(&rb, b);
         if (prev == '\r' && b == '\n') {
-            if (is_urc) {
-                // this is an URC string. Process it
-                printf("Found URC: %s\n", rb.data);
-            }
             if (eol_cb) {
                 eol_cb(ctx, &rb, is_urc);
             }
             b_reset(&rb);
             is_urc = false;
+            if (receive_notification) {
+                if (recv_cb) {
+                    char *countptr = NULL;
+                    char *fdptr = receive_count;
+                    for (int i = 0; i < sizeof(receive_count); i++) {
+                        if (receive_count[i] == ',') {
+                            countptr = (receive_count + i + 1);
+                            receive_count[i] = 0;
+                        }
+                    }
+                    recv_cb(atoi(fdptr), atoi(countptr));
+                }
+                receive_notification = false;
+            }
         }
         if (char_cb) {
             char_cb(ctx, &rb, b, is_urc, isspace(b));
         }
-
+        if (is_urc && receive_notification && !isspace(b)) {
+            receive_count[idx++] = b;
+        }
         if (rb.size >= 2) {
             if (b_is(&rb, "OK", 2)) {
                 return 0;
@@ -98,6 +118,10 @@ int decode_input(void *ctx, char_callback_t char_cb, eol_callback_t eol_cb) {
             if (b_is(&rb, "ERROR", 5)) {
                 return -1;
             }
+        }
+        if (is_urc && rb.size == 8 && b_is(&rb, "+NSONMI:", 8)) {
+            // capture this URC
+            receive_notification = true;
         }
         timeout = -1;
         prev = b;
