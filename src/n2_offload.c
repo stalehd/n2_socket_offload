@@ -31,7 +31,7 @@ struct n2_socket
     //    struct sockaddr *addr;
     int local_port;
     ssize_t incoming_len;
-    struct sockaddr *remote_addr;
+    void *remote_addr;
     ssize_t remote_len;
 };
 
@@ -59,7 +59,7 @@ static void clear_socket(int sock_fd)
     sockets[sock_fd].local_port = 0;
     sockets[sock_fd].incoming_len = 0;
     sockets[sock_fd].remote_len = 0;
-    if (sockets[sock_fd].remote_addr)
+    if (sockets[sock_fd].remote_addr != NULL)
     {
         k_free(sockets[sock_fd].remote_addr);
     }
@@ -105,6 +105,7 @@ static int offload_connect(int sock_fd, const struct sockaddr *addr,
     sockets[sock_fd].connected = true;
     sockets[sock_fd].remote_addr = k_malloc(addrlen);
     memcpy(sockets[sock_fd].remote_addr, addr, addrlen);
+    LOG_INF("Copied remote address to socket");
     k_mutex_unlock(&mutex);
     return 0;
 }
@@ -181,11 +182,11 @@ static ssize_t offload_recvfrom(int sock_fd, void *buf, short int len,
             k_mutex_unlock(&mutex);
             return 0;
         }
-        if (fromlen)
+        if (fromlen != NULL)
         {
             *fromlen = sizeof(struct sockaddr_in);
         }
-        if (from)
+        if (from != NULL)
         {
             ((struct sockaddr_in *)from)->sin_family = AF_INET;
             ((struct sockaddr_in *)from)->sin_port = htons(port);
@@ -201,9 +202,9 @@ static ssize_t offload_recvfrom(int sock_fd, void *buf, short int len,
 
 static ssize_t offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
 {
+    ARG_UNUSED(flags);
     LOG_INF("recv()");
     k_mutex_lock(&mutex, K_FOREVER);
-    ARG_UNUSED(flags);
 
     if (!VALID_SOCKET(sock_fd))
     {
@@ -217,6 +218,7 @@ static ssize_t offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
         k_mutex_unlock(&mutex);
         return -EINVAL;
     }
+
     while (sockets[sock_fd].incoming_len == 0)
     {
         k_mutex_unlock(&mutex);
@@ -225,15 +227,13 @@ static ssize_t offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
         k_mutex_lock(&mutex, K_FOREVER);
     }
     LOG_INF("recv() call recvfrom(max_len=%d)", max_len);
-    ssize_t ret = offload_recvfrom(sock_fd, buf, max_len, flags, NULL, NULL);
-    return ret;
+    return offload_recvfrom(sock_fd, buf, max_len, flags, NULL, NULL);
 }
 
 static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
                               int flags, const struct sockaddr *to,
                               socklen_t tolen)
 {
-    LOG_INF("sendto()");
     if (!VALID_SOCKET(sock_fd))
     {
         LOG_ERR("Invalid socket fd: %d", sock_fd);
@@ -258,7 +258,6 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
         k_mutex_unlock(&mutex);
         return -EINVAL;
     }
-    LOG_INF("sendto(fd=%d, len=%d)", sockets[sock_fd].id, len);
     sprintf(modem_command_buffer,
             "AT+NSOST=%d,\"%s\",%d,%d,\"",
             sockets[sock_fd].id, addr,
@@ -266,10 +265,9 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
             len);
     modem_write(modem_command_buffer);
 
+    char byte[3];
     for (int i = 0; i < len; i++)
     {
-        char byte[3];
-
         byte[0] = TO_HEX((((const char *)buf)[i] >> 4));
         byte[1] = TO_HEX((((const char *)buf)[i] & 0xF));
         byte[2] = 0;
@@ -278,24 +276,22 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
 
     modem_write("\"\r\n");
 
-    int sockfd = -1;
-    size_t written = -1;
-    switch (atnsost_decode(&sockfd, &written))
+    int written = len;
+    switch (atnsost_decode())
     {
     case AT_OK:
-        LOG_INF("sendto sent %d bytes", written);
         break;
     case AT_ERROR:
         LOG_ERR("ERROR response");
-        written = -EBADMSG;
+        written = -ENOMEM;
         break;
     case AT_TIMEOUT:
         LOG_ERR("Timeout reading response from AT+NSOST");
-        written = -EAGAIN;
+        written = -ENOMEM;
         break;
     }
     k_mutex_unlock(&mutex);
-    return written;
+    return (int)written;
 }
 
 static ssize_t offload_send(int sock_fd, const void *buf, size_t len, int flags)
@@ -314,8 +310,10 @@ static ssize_t offload_send(int sock_fd, const void *buf, size_t len, int flags)
         return -ENOTCONN;
     }
     k_mutex_unlock(&mutex);
-    return offload_sendto(sock_fd, buf, len, flags,
-                          sockets[sock_fd].remote_addr, sockets[sock_fd].remote_len);
+    int ret = offload_sendto(sock_fd, buf, len, flags,
+                             sockets[sock_fd].remote_addr, sockets[sock_fd].remote_len);
+    LOG_INF("send() completed (ret=%d)", ret);
+    return ret;
 }
 
 static int offload_socket(int family, int type, int proto)

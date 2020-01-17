@@ -14,7 +14,7 @@ LOG_MODULE_REGISTER(comms);
 #include "at_commands.h"
 
 // Ring buffer size
-#define RB_SIZE 64
+#define RB_SIZE 256
 
 // Underlying ring buffer
 static u8_t buffer[RB_SIZE];
@@ -50,12 +50,12 @@ static void uart_isr(void *user_data)
         {
             return;
         }
-        printf("%c", data);
+        //printf("%c", data);
         rb = ring_buf_put(&rx_rb, &data, 1);
         if (rb != rx)
         {
             LOG_ERR("RX buffer is full. Bytes pending: %d, written: %d", rx, rb);
-            k_sem_give(&rx_sem);
+            //k_sem_give(&rx_sem);
             return;
         }
         k_sem_give(&rx_sem);

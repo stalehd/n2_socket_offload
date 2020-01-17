@@ -1,5 +1,6 @@
 #include <zephyr.h>
 #include <logging/log.h>
+
 #include <dfu/mcuboot.h>
 #include <dfu/flash_img.h>
 #include <misc/reboot.h>

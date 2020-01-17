@@ -26,10 +26,11 @@ LOG_MODULE_REGISTER(app);
 #include "comms.h"
 #include "fota.h"
 
-static const char *message = "Hello there";
+static char *message = "Hello there";
 void udpTest()
 {
     LOG_DBG("Sending packet (%s)", message);
+    int err;
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0)
@@ -38,15 +39,22 @@ void udpTest()
         return;
     }
 
-    /*
-    LOG_DBG("Preparing packet");
+    LOG_DBG("Connecting");
     static struct sockaddr_in remote_addr = {
         sin_family : AF_INET,
         sin_port : htons(1234),
     };
     net_addr_pton(AF_INET, "172.16.15.14", &remote_addr.sin_addr);
 
-    int err = sendto(sock, message, strlen(message), 0, (struct sockaddr *)&remote_addr, sizeof(remote_addr));
+    err = connect(sock, (struct sockaddr *)&remote_addr, sizeof(remote_addr));
+    if (err < 0)
+    {
+        LOG_ERR("Unable to connect to backend: %d", err);
+        close(sock);
+        return;
+    }
+    LOG_DBG("Connected, sending message");
+    err = send(sock, message, strlen(message), 0);
     if (err < 0)
     {
         LOG_ERR("Error sending: %d", err);
@@ -54,19 +62,16 @@ void udpTest()
         return;
     }
 
-    LOG_DBG("Sent message, waiting for downstream");
-    */
     LOG_DBG("Waiting for downstream message");
     bool received = false;
+    /*
     while (!received)
     {
 // Wait for response
 #define BUF_LEN 64
         u8_t buffer[BUF_LEN];
         memset(buffer, 0, BUF_LEN);
-        struct sockaddr_in *addr;
-        socklen_t addrlen;
-        int err = recvfrom(sock, buffer, BUF_LEN, 0, (struct sockaddr *)&addr, &addrlen);
+        int err = recv(sock, buffer, BUF_LEN, 0);
         if (err < 0)
         {
             LOG_ERR("Error receiving: %d", err);
@@ -78,7 +83,7 @@ void udpTest()
             received = true;
         }
         k_sleep(K_MSEC(1000));
-    }
+    }*/
     close(sock);
 
     // OK - great success. Now use CoAP to POST to the backend.
@@ -104,5 +109,5 @@ void main(void)
 
     k_sleep(10000);
 
-    fotaTest();
+    udpTest();
 }

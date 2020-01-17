@@ -271,33 +271,9 @@ struct nsost_ctx
     size_t *len;
 };
 
-void nsost_eol(void *ctx, struct buf *rb, bool is_urc)
+int atnsost_decode()
 {
-    if (!is_urc && rb->size >= 3)
-    {
-        struct nsost_ctx *c = (struct nsost_ctx *)ctx;
-        char *sfd = (char *)rb->data;
-        char *slen = NULL;
-        for (int i = 0; i < rb->size; i++)
-        {
-            if (rb->data[i] == ',')
-            {
-                rb->data[i] = 0;
-                slen = (char *)(rb->data + i + 1);
-            }
-        }
-        *(c->sockfd) = atoi(sfd);
-        *(c->len) = atoi(slen);
-    }
-}
-
-int atnsost_decode(int *sockfd, size_t *len)
-{
-    struct nsost_ctx ctx = {
-        .sockfd = sockfd,
-        .len = len,
-    };
-    return decode_input(&ctx, NULL, nsost_eol);
+    return decode_input(NULL, NULL, NULL);
 }
 
 // Decode NSORF responses. Each field is decoded separately and stored off in
