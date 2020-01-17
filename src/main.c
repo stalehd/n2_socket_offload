@@ -38,8 +38,8 @@ void udpTest()
         return;
     }
 
+    /*
     LOG_DBG("Preparing packet");
-
     static struct sockaddr_in remote_addr = {
         sin_family : AF_INET,
         sin_port : htons(1234),
@@ -55,6 +55,8 @@ void udpTest()
     }
 
     LOG_DBG("Sent message, waiting for downstream");
+    */
+    LOG_DBG("Waiting for downstream message");
     bool received = false;
     while (!received)
     {

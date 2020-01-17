@@ -119,6 +119,11 @@ int decode_input(void *ctx, char_callback_t char_cb, eol_callback_t eol_cb) {
                 return -1;
             }
         }
+        // Additional URCs to support:
+        //  - CEREG
+        //  - NPSMR
+        //  - CSCON
+        //  - UFOTAS
         if (is_urc && rb.size == 8 && b_is(&rb, "+NSONMI:", 8)) {
             // capture this URC
             receive_notification = true;

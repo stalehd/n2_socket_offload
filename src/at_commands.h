@@ -1,7 +1,12 @@
 #pragma once
 
-#include <zephyr.h>
-#include <net/socket.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+
+#define AT_OK 0
+#define AT_ERROR -1
+#define AT_TIMEOUT -2
 
 /**
  * @brief Callback for receive notifications.
@@ -19,9 +24,18 @@ void receive_callback(at_callback_t receive_cb);
  * @brief  Decode AT+NSORF response. The buffer is read in multiple chunks from
  *         the modem.
  * @return -1 for ERROR response, -2 for timeout, number of bytes decoded otherwise
- * @note   Will swallow URCs and call the appropriate callbacks
+ * @note   Will swallow URCs and call the appropriate callbacks. The lenght of
+ *         the buffer must fit the number of bytes that is returned (it's set in
+ *         the NSORF command)
  */
-int atnsorf_decode(u8_t *buffer, size_t len, struct sockaddr *from, socklen_t *fromlen);
+int atnsorf_decode(int *sockfd, char *ip, int *port, uint8_t *data, size_t *received, size_t *remaining);
+
+/**
+ * @brief Decode AT+CGPADDR response.
+ * @return  0 for OK, -1 for ERROR response, -2 for timeout, lenght of address string otherwise
+ * @note Will swallow URCs and call appropriate callbacks.  Address might be "0"
+ */
+int atcgpaddr_decode(char *address, size_t *len);
 
 /**
  * @brief  Decode AT+NSOCR response. Reads until OK or ERROR is received.
@@ -46,6 +60,11 @@ int atnsost_decode(int *sockfd, size_t *len);
 
 /**
  * @brief Reads response from AT+NRB command. Reads until OK or ERROR is received.
+ * @return 0 for OK, -1 for ERROR response, -2 for timeout, -3 for invalid input
  * @note  Will swallow URCs and call the appropriate callbacks
  */
 int atnrb_decode();
+
+int atcpsms_decode();
+
+int at_decode();

@@ -35,6 +35,8 @@ struct n2_socket
     ssize_t remote_len;
 };
 
+static struct k_mutex mutex;
+
 static struct n2_socket sockets[MDM_MAX_SOCKETS];
 static int next_free_socket = 0;
 static int next_free_port = 6000;
@@ -65,51 +67,56 @@ static void clear_socket(int sock_fd)
 
 static int offload_close(int sock_fd)
 {
-    LOG_DBG("close()");
+    k_mutex_lock(&mutex, K_FOREVER);
     if (!VALID_SOCKET(sock_fd))
     {
+        k_mutex_unlock(&mutex);
         return -EINVAL;
     }
     sprintf(modem_command_buffer, "AT+NSOCL=%d\r\n", sockets[sock_fd].id);
     modem_write(modem_command_buffer);
 
-    struct modem_result result;
-    if (!modem_read_and_no_error(&result, CMD_TIMEOUT)) {
+    if (atnsocl_decode() != AT_OK)
+    {
+        k_mutex_unlock(&mutex);
         return -ENOMEM;
     }
     clear_socket(sock_fd);
-    LOG_DBG("close() end");
+    k_mutex_unlock(&mutex);
     return 0;
 }
 
 static int offload_connect(int sock_fd, const struct sockaddr *addr,
                            socklen_t addrlen)
 {
-    LOG_DBG("connect()");
+    k_mutex_lock(&mutex, K_FOREVER);
     if (!VALID_SOCKET(sock_fd))
     {
+        k_mutex_unlock(&mutex);
         return -EINVAL;
     }
     // Find matching socket, then check if it created on the modem. It shouldn't be created
     if (sockets[sock_fd].id != 0)
     {
+        k_mutex_unlock(&mutex);
         return -EISCONN;
     }
 
     sockets[sock_fd].connected = true;
     sockets[sock_fd].remote_addr = k_malloc(addrlen);
     memcpy(sockets[sock_fd].remote_addr, addr, addrlen);
-    LOG_DBG("connect() end");
+    k_mutex_unlock(&mutex);
     return 0;
 }
 
 static int offload_poll(struct pollfd *fds, int nfds, int msecs)
 {
-//    LOG_DBG("poll()");
-    k_yield();
+    LOG_INF("poll()");
+    k_mutex_lock(&mutex, K_FOREVER);
     if (nfds != 1)
     {
         LOG_ERR("poll has invalid nfds: %d", nfds);
+        k_mutex_unlock(&mutex);
         return -EINVAL;
     }
     for (int i = 0; i < nfds; i++)
@@ -127,7 +134,8 @@ static int offload_poll(struct pollfd *fds, int nfds, int msecs)
             }
         }
     }
-//    LOG_DBG("poll() end");
+    k_mutex_unlock(&mutex);
+    LOG_INF("poll() done");
     return 0;
 }
 
@@ -135,46 +143,89 @@ static ssize_t offload_recvfrom(int sock_fd, void *buf, short int len,
                                 short int flags, struct sockaddr *from,
                                 socklen_t *fromlen)
 {
-    LOG_DBG("recvfrom()");
+    LOG_INF("recvfrom()");
     ARG_UNUSED(flags);
-
+    k_mutex_lock(&mutex, K_FOREVER);
     if (!VALID_SOCKET(sock_fd))
     {
         LOG_ERR("Invalid socket fd: %d", sock_fd);
+        k_mutex_unlock(&mutex);
         return -EINVAL;
     }
 
-    if (!sockets[sock_fd].incoming_len)
+    // Now here's an interesting bit of information: If you send AT+NSORF *before*
+    // you receive the +NSONMI URC from the module you'll get just three fields
+    // in return: socket, data, remaining. IT WOULD HAVE BEEN REALLY NICE IF THE
+    // DOCUMENTATION INCLUDED THIS.
+    if (sockets[sock_fd].incoming_len == 0)
     {
-        LOG_INF("No incoming data waiting on socket %d", sock_fd);
-        // no data waiting
+        modem_write("AT\r\n");
+        at_decode();
+        k_mutex_unlock(&mutex);
+        return 0;
     }
+
     // Use NSORF to read incoming data.
     sprintf(modem_command_buffer, "AT+NSORF=%d,%d\r\n", sockets[sock_fd].id, len);
     modem_write(modem_command_buffer);
-    k_yield();
-    ssize_t ret = atnsorf_decode(buf, len, from, fromlen);
-    LOG_DBG("recvfrom() end");
-    return ret;
+
+    char ip[16];
+    int port = 0;
+    size_t remain = 0;
+    int sockfd = 0;
+    size_t received = 0;
+    if (atnsorf_decode(&sockfd, ip, &port, buf, &received, &remain) == AT_OK)
+    {
+        if (received == 0)
+        {
+            k_mutex_unlock(&mutex);
+            return 0;
+        }
+        if (fromlen)
+        {
+            *fromlen = sizeof(struct sockaddr_in);
+        }
+        if (from)
+        {
+            ((struct sockaddr_in *)from)->sin_family = AF_INET;
+            ((struct sockaddr_in *)from)->sin_port = htons(port);
+            inet_pton(AF_INET, ip, &((struct sockaddr_in *)from)->sin_addr);
+        }
+        sockets[sock_fd].incoming_len = remain;
+        k_mutex_unlock(&mutex);
+        return received;
+    }
+    k_mutex_unlock(&mutex);
+    return -ENOMEM;
 }
 
 static ssize_t offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
 {
-    LOG_DBG("recv()");
+    LOG_INF("recv()");
+    k_mutex_lock(&mutex, K_FOREVER);
     ARG_UNUSED(flags);
 
     if (!VALID_SOCKET(sock_fd))
     {
         LOG_ERR("Invalid socket fd: %d", sock_fd);
+        k_mutex_unlock(&mutex);
         return -EINVAL;
     }
 
     if (!sockets[sock_fd].connected)
     {
+        k_mutex_unlock(&mutex);
         return -EINVAL;
     }
+    while (sockets[sock_fd].incoming_len == 0)
+    {
+        k_mutex_unlock(&mutex);
+        LOG_INF("Waiting...");
+        k_sleep(K_MSEC(1000));
+        k_mutex_lock(&mutex, K_FOREVER);
+    }
+    LOG_INF("recv() call recvfrom(max_len=%d)", max_len);
     ssize_t ret = offload_recvfrom(sock_fd, buf, max_len, flags, NULL, NULL);
-    LOG_DBG("recv() end");
     return ret;
 }
 
@@ -182,7 +233,7 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
                               int flags, const struct sockaddr *to,
                               socklen_t tolen)
 {
-    LOG_DBG("sendto()");
+    LOG_INF("sendto()");
     if (!VALID_SOCKET(sock_fd))
     {
         LOG_ERR("Invalid socket fd: %d", sock_fd);
@@ -195,6 +246,8 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
         return -EINVAL;
     }
 
+    k_mutex_lock(&mutex, K_FOREVER);
+
     struct sockaddr_in *toaddr = (struct sockaddr_in *)to;
 
     char addr[64];
@@ -202,9 +255,10 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
     {
         LOG_ERR("Unable to convert address to string");
         // couldn't read address. Bail out
+        k_mutex_unlock(&mutex);
         return -EINVAL;
     }
-    LOG_DBG("Start write");
+    LOG_INF("sendto(fd=%d, len=%d)", sockets[sock_fd].id, len);
     sprintf(modem_command_buffer,
             "AT+NSOST=%d,\"%s\",%d,%d,\"",
             sockets[sock_fd].id, addr,
@@ -224,59 +278,72 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
 
     modem_write("\"\r\n");
 
-    struct modem_result result;
-    // Read back the result ([fd],[length])
-    if (!modem_read_and_no_error(&result, CMD_TIMEOUT))
+    int sockfd = -1;
+    size_t written = -1;
+    switch (atnsost_decode(&sockfd, &written))
     {
-        LOG_ERR("Got error when issuing AT+NSOST command");
-        return -ENOMEM;
+    case AT_OK:
+        LOG_INF("sendto sent %d bytes", written);
+        break;
+    case AT_ERROR:
+        LOG_ERR("ERROR response");
+        written = -EBADMSG;
+        break;
+    case AT_TIMEOUT:
+        LOG_ERR("Timeout reading response from AT+NSOST");
+        written = -EAGAIN;
+        break;
     }
-    LOG_INF("sendto() end: Sent %d bytes to %s", len, log_strdup(addr));
-    return len;
+    k_mutex_unlock(&mutex);
+    return written;
 }
 
 static ssize_t offload_send(int sock_fd, const void *buf, size_t len, int flags)
 {
-    LOG_DBG("send()");
+    k_mutex_lock(&mutex, K_FOREVER);
     if (!VALID_SOCKET(sock_fd))
     {
         LOG_ERR("Invalid socket fd: %d", sock_fd);
+        k_mutex_unlock(&mutex);
         return -EINVAL;
     }
     if (!sockets[sock_fd].connected)
     {
         LOG_ERR("Socket not connected: (%d)", sock_fd);
+        k_mutex_unlock(&mutex);
         return -ENOTCONN;
     }
-
-    ssize_t ret = offload_sendto(sock_fd, buf, len, flags,
-                                 sockets[sock_fd].remote_addr, sockets[sock_fd].remote_len);
-    LOG_DBG("send() end");
-    return ret;
+    k_mutex_unlock(&mutex);
+    return offload_sendto(sock_fd, buf, len, flags,
+                          sockets[sock_fd].remote_addr, sockets[sock_fd].remote_len);
 }
 
 static int offload_socket(int family, int type, int proto)
 {
-    LOG_DBG("socket()");
+    k_mutex_lock(&mutex, K_FOREVER);
     if (family != AF_INET)
     {
         LOG_ERR("Unsupported family (%d)", family);
+        k_mutex_unlock(&mutex);
         return -EAFNOSUPPORT;
     }
     if (type != SOCK_DGRAM)
     {
         LOG_ERR("Unsupported type (%d)", type);
+        k_mutex_unlock(&mutex);
         return -ENOTSUP;
     }
     if (proto != IPPROTO_UDP)
     {
         LOG_ERR("Unsupported proto (%d)", proto);
+        k_mutex_unlock(&mutex);
         return -ENOTSUP;
     }
 
     if (next_free_socket > MDM_MAX_SOCKETS)
     {
         LOG_ERR("Max sockets in use");
+        k_mutex_unlock(&mutex);
         return -ENOMEM;
     }
     int fd = next_free_socket;
@@ -287,15 +354,17 @@ static int offload_socket(int family, int type, int proto)
     sprintf(modem_command_buffer, "AT+NSOCR=\"DGRAM\",17,%d,1\r\n", sockets[fd].local_port);
     modem_write(modem_command_buffer);
 
-    struct modem_result result;
-    if (!modem_read_and_no_error(&result, CMD_TIMEOUT))
+    int sockfd = -1;
+    if (atnsocr_decode(&sockfd) == AT_OK)
     {
-        LOG_ERR("Unable to read socket fd from modem");
-        return -ENOMEM;
+        sockets[fd].id = sockfd;
+        LOG_INF("socket() end: Created socket. fd = %d, modem fd = %d, local port = %d", fd, sockets[fd].id, sockets[fd].local_port);
+        k_mutex_unlock(&mutex);
+        return fd;
     }
-    sockets[fd].id = atoi(result.buffer);
-    LOG_INF("socket() end: Created socket. fd = %d, modem fd = %d, local port = %d", fd, sockets[fd].id, sockets[fd].local_port);
-    return fd;
+    LOG_ERR("Unable to decode NSOCR");
+    k_mutex_unlock(&mutex);
+    return -ENOMEM;
 }
 
 // We're only interested in socket(), close(), connect(), poll()/POLLIN, send() and recvfrom()
@@ -359,16 +428,24 @@ static void receive_cb(int fd, size_t bytes)
 static int n2_init(struct device *dev)
 {
     ARG_UNUSED(dev);
-    modem_receive_callback(receive_cb);
+
+    k_mutex_init(&mutex);
+
+    receive_callback(receive_cb);
 
     modem_init();
     modem_restart();
-    LOG_INF("Waiting for modem to be ready...");
+    LOG_INF("Waiting for modem to connect...");
     while (!modem_is_ready())
     {
         k_sleep(K_MSEC(2000));
     }
-    LOG_INF("Modem is ready");
+    LOG_INF("Modem is ready. Turning off PSM");
+    modem_write("AT+CPSMS=0\r\n");
+    if (atcpsms_decode() != AT_OK)
+    {
+        LOG_ERR("Unable to turn off PSM for modem");
+    }
     return 0;
 }
 
