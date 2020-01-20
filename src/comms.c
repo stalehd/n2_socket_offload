@@ -55,7 +55,6 @@ static void uart_isr(void *user_data)
         if (rb != rx)
         {
             LOG_ERR("RX buffer is full. Bytes pending: %d, written: %d", rx, rb);
-            //k_sem_give(&rx_sem);
             return;
         }
         k_sem_give(&rx_sem);
@@ -68,6 +67,7 @@ void modem_write(const char *cmd)
     size_t data_size = strlen(cmd);
     do
     {
+        printf("%c", *buf);
         uart_poll_out(uart_dev, *buf++);
     } while (--data_size);
 }
@@ -79,6 +79,7 @@ bool modem_read(uint8_t *b, int32_t timeout)
     case 0:
         if (ring_buf_get(&rx_rb, b, 1) == 1)
         {
+            printf("%c", (char)*b);
             return true;
         }
         break;
@@ -101,6 +102,8 @@ void modem_init(void)
     }
     uart_irq_callback_user_data_set(uart_dev, uart_isr, uart_dev);
     uart_irq_rx_enable(uart_dev);
+    modem_write("AT+CIMI\r\n");
+    at_decode();
     LOG_DBG("UART device loaded.");
 }
 
@@ -122,6 +125,5 @@ bool modem_is_ready()
 void modem_restart()
 {
     modem_write("AT+NRB\r\n");
-    // just wait for OK or ERROR - don't care about the result (yet)
     atnrb_decode();
 }

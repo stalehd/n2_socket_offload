@@ -11,7 +11,6 @@
 LOG_MODULE_REGISTER(at_commands);
 
 #define CMD_TIMEOUT K_MSEC(10000)
-#define CMD_READ_TIMEOUT K_MSEC(1000)
 
 static at_callback_t recv_cb = NULL;
 
@@ -80,11 +79,10 @@ typedef void (*char_callback_t)(void *ctx, struct buf *rb, char b, bool is_urc, 
 // new line is found. The buffer will contain the *first* 9 characters of the line
 // so it might be truncated.
 //
-int decode_input(void *ctx, char_callback_t char_cb, eol_callback_t eol_cb)
+int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callback_t eol_cb)
 {
     struct buf rb;
     b_init(&rb);
-    int32_t timeout = CMD_TIMEOUT;
     uint8_t b, prev = ' ';
     bool is_urc = false;
     bool receive_notification = false;
@@ -157,7 +155,6 @@ int decode_input(void *ctx, char_callback_t char_cb, eol_callback_t eol_cb)
             // capture this URC
             receive_notification = true;
         }
-        timeout = CMD_READ_TIMEOUT;
         prev = b;
     }
     return AT_TIMEOUT;
@@ -165,13 +162,13 @@ int decode_input(void *ctx, char_callback_t char_cb, eol_callback_t eol_cb)
 
 int atnrb_decode()
 {
-    return decode_input(NULL, NULL, NULL);
+    return decode_input(CMD_TIMEOUT, NULL, NULL, NULL);
 }
 
 // Just wait for OK or ERROR
 int atnsocl_decode()
 {
-    return decode_input(NULL, NULL, NULL);
+    return decode_input(CMD_TIMEOUT, NULL, NULL, NULL);
 }
 
 // Decode the CGPADDR response. The in_address flag says if we're in the address
@@ -240,7 +237,7 @@ int atcgpaddr_decode(char *address, size_t *len)
         .buffer = buffer,
         .i = 0,
     };
-    return decode_input(&ctx, cgpaddr_char, cgpaddr_eol);
+    return decode_input(CMD_TIMEOUT, &ctx, cgpaddr_char, cgpaddr_eol);
 }
 
 // Decode NSCR responses. This is fairly straightforward since there's only
@@ -259,7 +256,7 @@ void nsocr_eol(void *ctx, struct buf *rb, bool is_urc)
 int atnsocr_decode(int *sockfd)
 {
     *sockfd = -2;
-    return decode_input(sockfd, NULL, nsocr_eol);
+    return decode_input(CMD_TIMEOUT, sockfd, NULL, nsocr_eol);
 }
 
 // Decode SOST responses. Also quite simple since everything fits into
@@ -273,7 +270,7 @@ struct nsost_ctx
 
 int atnsost_decode()
 {
-    return decode_input(NULL, NULL, NULL);
+    return decode_input(CMD_TIMEOUT, NULL, NULL, NULL);
 }
 
 // Decode NSORF responses. Each field is decoded separately and stored off in
@@ -369,15 +366,20 @@ int atnsorf_decode(int *sockfd, char *ip, int *port, uint8_t *data, size_t *rece
         .dataidx = 0,
         .received = received,
     };
-    return decode_input(&ctx, nsorf_char, nsorf_eol);
+    return decode_input(CMD_TIMEOUT, &ctx, nsorf_char, nsorf_eol);
 }
 
 int atcpsms_decode()
 {
-    return decode_input(NULL, NULL, NULL);
+    return decode_input(CMD_TIMEOUT, NULL, NULL, NULL);
 }
 
 int at_decode()
 {
-    return decode_input(NULL, NULL, NULL);
+    return decode_input(CMD_TIMEOUT, NULL, NULL, NULL);
+}
+
+int at_poll(int32_t timeout)
+{
+    return decode_input(CMD_TIMEOUT, NULL, NULL, NULL);
 }

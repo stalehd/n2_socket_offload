@@ -68,3 +68,8 @@ int atnrb_decode();
 int atcpsms_decode();
 
 int at_decode();
+
+/*
+ * @brief Poll UART for URCs
+ */
+int at_poll(int32_t timeout);

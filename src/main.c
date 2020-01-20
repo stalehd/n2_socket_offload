@@ -64,7 +64,6 @@ void udpTest()
 
     LOG_DBG("Waiting for downstream message");
     bool received = false;
-    /*
     while (!received)
     {
 // Wait for response
@@ -83,7 +82,7 @@ void udpTest()
             received = true;
         }
         k_sleep(K_MSEC(1000));
-    }*/
+    }
     close(sock);
 
     // OK - great success. Now use CoAP to POST to the backend.
@@ -106,8 +105,5 @@ void fotaTest()
 
 void main(void)
 {
-
-    k_sleep(10000);
-
-    udpTest();
+    fotaTest();
 }

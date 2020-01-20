@@ -35,8 +35,6 @@ struct n2_socket
     ssize_t remote_len;
 };
 
-static struct k_mutex mutex;
-
 static struct n2_socket sockets[MDM_MAX_SOCKETS];
 static int next_free_socket = 0;
 static int next_free_port = 6000;
@@ -48,6 +46,8 @@ static char modem_command_buffer[CMD_BUFFER_SIZE];
 
 #define TO_HEX(i) (i <= 9 ? '0' + i : 'A' - 10 + i)
 #define VALID_SOCKET(s) (sockets[s].id >= 0)
+
+static struct k_sem mdm_sem;
 
 /**
  * @brief Clear socket state
@@ -67,59 +67,55 @@ static void clear_socket(int sock_fd)
 
 static int offload_close(int sock_fd)
 {
-    k_mutex_lock(&mutex, K_FOREVER);
     if (!VALID_SOCKET(sock_fd))
     {
-        k_mutex_unlock(&mutex);
         return -EINVAL;
     }
+    k_sem_take(&mdm_sem, K_FOREVER);
     sprintf(modem_command_buffer, "AT+NSOCL=%d\r\n", sockets[sock_fd].id);
     modem_write(modem_command_buffer);
 
     if (atnsocl_decode() != AT_OK)
     {
-        k_mutex_unlock(&mutex);
+        k_sem_give(&mdm_sem);
         return -ENOMEM;
     }
     clear_socket(sock_fd);
-    k_mutex_unlock(&mutex);
+    k_sem_give(&mdm_sem);
     return 0;
 }
 
 static int offload_connect(int sock_fd, const struct sockaddr *addr,
                            socklen_t addrlen)
 {
-    k_mutex_lock(&mutex, K_FOREVER);
     if (!VALID_SOCKET(sock_fd))
     {
-        k_mutex_unlock(&mutex);
         return -EINVAL;
     }
+    k_sem_take(&mdm_sem, K_FOREVER);
     // Find matching socket, then check if it created on the modem. It shouldn't be created
     if (sockets[sock_fd].id != 0)
     {
-        k_mutex_unlock(&mutex);
+        k_sem_give(&mdm_sem);
         return -EISCONN;
     }
 
     sockets[sock_fd].connected = true;
     sockets[sock_fd].remote_addr = k_malloc(addrlen);
     memcpy(sockets[sock_fd].remote_addr, addr, addrlen);
-    LOG_INF("Copied remote address to socket");
-    k_mutex_unlock(&mutex);
+    k_sem_give(&mdm_sem);
     return 0;
 }
 
 static int offload_poll(struct pollfd *fds, int nfds, int msecs)
 {
-    LOG_INF("poll()");
-    k_mutex_lock(&mutex, K_FOREVER);
     if (nfds != 1)
     {
         LOG_ERR("poll has invalid nfds: %d", nfds);
-        k_mutex_unlock(&mutex);
         return -EINVAL;
     }
+    k_sem_take(&mdm_sem, K_FOREVER);
+    // at_poll(10);
     for (int i = 0; i < nfds; i++)
     {
         if (!VALID_SOCKET(fds[i].fd))
@@ -127,32 +123,27 @@ static int offload_poll(struct pollfd *fds, int nfds, int msecs)
             fds[i].revents = POLLNVAL;
             continue;
         }
-        if ((POLLIN & fds[i].events) == POLLIN)
+        if (sockets[fds[i].fd].incoming_len > 0)
         {
-            if (sockets[fds[i].fd].incoming_len > 0)
-            {
-                fds[i].revents |= POLLIN;
-            }
+            fds[i].revents |= POLLIN;
         }
     }
-    k_mutex_unlock(&mutex);
-    LOG_INF("poll() done");
+    k_sem_give(&mdm_sem);
     return 0;
 }
 
-static ssize_t offload_recvfrom(int sock_fd, void *buf, short int len,
-                                short int flags, struct sockaddr *from,
-                                socklen_t *fromlen)
+static int offload_recvfrom(int sock_fd, void *buf, short int len,
+                            short int flags, struct sockaddr *from,
+                            socklen_t *fromlen)
 {
-    LOG_INF("recvfrom()");
     ARG_UNUSED(flags);
-    k_mutex_lock(&mutex, K_FOREVER);
     if (!VALID_SOCKET(sock_fd))
     {
         LOG_ERR("Invalid socket fd: %d", sock_fd);
-        k_mutex_unlock(&mutex);
         return -EINVAL;
     }
+
+    k_sem_take(&mdm_sem, K_FOREVER);
 
     // Now here's an interesting bit of information: If you send AT+NSORF *before*
     // you receive the +NSONMI URC from the module you'll get just three fields
@@ -160,10 +151,9 @@ static ssize_t offload_recvfrom(int sock_fd, void *buf, short int len,
     // DOCUMENTATION INCLUDED THIS.
     if (sockets[sock_fd].incoming_len == 0)
     {
+        LOG_INF("Popping the cherry");
         modem_write("AT\r\n");
         at_decode();
-        k_mutex_unlock(&mutex);
-        return 0;
     }
 
     // Use NSORF to read incoming data.
@@ -179,7 +169,7 @@ static ssize_t offload_recvfrom(int sock_fd, void *buf, short int len,
     {
         if (received == 0)
         {
-            k_mutex_unlock(&mutex);
+            k_sem_give(&mdm_sem);
             return 0;
         }
         if (fromlen != NULL)
@@ -193,46 +183,44 @@ static ssize_t offload_recvfrom(int sock_fd, void *buf, short int len,
             inet_pton(AF_INET, ip, &((struct sockaddr_in *)from)->sin_addr);
         }
         sockets[sock_fd].incoming_len = remain;
-        k_mutex_unlock(&mutex);
+        LOG_INF("recv(fd=%d, len=%d, remain=%d)", sock_fd, len, remain);
+        k_sem_give(&mdm_sem);
         return received;
     }
-    k_mutex_unlock(&mutex);
+    k_sem_give(&mdm_sem);
     return -ENOMEM;
 }
 
-static ssize_t offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
+static int offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
 {
     ARG_UNUSED(flags);
     LOG_INF("recv()");
-    k_mutex_lock(&mutex, K_FOREVER);
 
     if (!VALID_SOCKET(sock_fd))
     {
         LOG_ERR("Invalid socket fd: %d", sock_fd);
-        k_mutex_unlock(&mutex);
         return -EINVAL;
     }
-
+    k_sem_take(&mdm_sem, K_FOREVER);
     if (!sockets[sock_fd].connected)
     {
-        k_mutex_unlock(&mutex);
+        k_sem_give(&mdm_sem);
         return -EINVAL;
     }
 
     while (sockets[sock_fd].incoming_len == 0)
     {
-        k_mutex_unlock(&mutex);
-        LOG_INF("Waiting...");
-        k_sleep(K_MSEC(1000));
-        k_mutex_lock(&mutex, K_FOREVER);
+        // We'll need to poll for URC
+        at_poll(500);
     }
     LOG_INF("recv() call recvfrom(max_len=%d)", max_len);
+    k_sem_give(&mdm_sem);
     return offload_recvfrom(sock_fd, buf, max_len, flags, NULL, NULL);
 }
 
-static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
-                              int flags, const struct sockaddr *to,
-                              socklen_t tolen)
+static int offload_sendto(int sock_fd, const void *buf, size_t len,
+                          int flags, const struct sockaddr *to,
+                          socklen_t tolen)
 {
     if (!VALID_SOCKET(sock_fd))
     {
@@ -246,8 +234,7 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
         return -EINVAL;
     }
 
-    k_mutex_lock(&mutex, K_FOREVER);
-
+    k_sem_take(&mdm_sem, K_FOREVER);
     struct sockaddr_in *toaddr = (struct sockaddr_in *)to;
 
     char addr[64];
@@ -255,7 +242,7 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
     {
         LOG_ERR("Unable to convert address to string");
         // couldn't read address. Bail out
-        k_mutex_unlock(&mutex);
+        k_sem_give(&mdm_sem);
         return -EINVAL;
     }
     sprintf(modem_command_buffer,
@@ -290,60 +277,57 @@ static ssize_t offload_sendto(int sock_fd, const void *buf, size_t len,
         written = -ENOMEM;
         break;
     }
-    k_mutex_unlock(&mutex);
-    return (int)written;
+    k_sem_give(&mdm_sem);
+    return written;
 }
 
-static ssize_t offload_send(int sock_fd, const void *buf, size_t len, int flags)
+static int offload_send(int sock_fd, const void *buf, size_t len, int flags)
 {
-    k_mutex_lock(&mutex, K_FOREVER);
     if (!VALID_SOCKET(sock_fd))
     {
         LOG_ERR("Invalid socket fd: %d", sock_fd);
-        k_mutex_unlock(&mutex);
         return -EINVAL;
     }
+    k_sem_take(&mdm_sem, K_FOREVER);
+
     if (!sockets[sock_fd].connected)
     {
         LOG_ERR("Socket not connected: (%d)", sock_fd);
-        k_mutex_unlock(&mutex);
+        k_sem_give(&mdm_sem);
         return -ENOTCONN;
     }
-    k_mutex_unlock(&mutex);
+    LOG_INF("send(fd=%d, len=%i)", sock_fd, len);
+    k_sem_give(&mdm_sem);
     int ret = offload_sendto(sock_fd, buf, len, flags,
                              sockets[sock_fd].remote_addr, sockets[sock_fd].remote_len);
-    LOG_INF("send() completed (ret=%d)", ret);
+    LOG_INF("send(fd=%d, len=%i) completed (ret=%d)", sock_fd, len, ret);
     return ret;
 }
 
 static int offload_socket(int family, int type, int proto)
 {
-    k_mutex_lock(&mutex, K_FOREVER);
     if (family != AF_INET)
     {
         LOG_ERR("Unsupported family (%d)", family);
-        k_mutex_unlock(&mutex);
         return -EAFNOSUPPORT;
     }
     if (type != SOCK_DGRAM)
     {
         LOG_ERR("Unsupported type (%d)", type);
-        k_mutex_unlock(&mutex);
         return -ENOTSUP;
     }
     if (proto != IPPROTO_UDP)
     {
         LOG_ERR("Unsupported proto (%d)", proto);
-        k_mutex_unlock(&mutex);
         return -ENOTSUP;
     }
 
     if (next_free_socket > MDM_MAX_SOCKETS)
     {
-        LOG_ERR("Max sockets in use");
-        k_mutex_unlock(&mutex);
+        LOG_ERR("Max sockets in use (next free=%d)", next_free_socket);
         return -ENOMEM;
     }
+    k_sem_take(&mdm_sem, K_FOREVER);
     int fd = next_free_socket;
     next_free_socket++;
     sockets[fd].local_port = next_free_port;
@@ -356,12 +340,12 @@ static int offload_socket(int family, int type, int proto)
     if (atnsocr_decode(&sockfd) == AT_OK)
     {
         sockets[fd].id = sockfd;
-        LOG_INF("socket() end: Created socket. fd = %d, modem fd = %d, local port = %d", fd, sockets[fd].id, sockets[fd].local_port);
-        k_mutex_unlock(&mutex);
+        LOG_INF("socket() end: Created socket. fd = %d, modem fd = %d, local port = %d, next= %d", fd, sockets[fd].id, sockets[fd].local_port, next_free_socket);
+        k_sem_give(&mdm_sem);
         return fd;
     }
     LOG_ERR("Unable to decode NSOCR");
-    k_mutex_unlock(&mutex);
+    k_sem_give(&mdm_sem);
     return -ENOMEM;
 }
 
@@ -427,7 +411,7 @@ static int n2_init(struct device *dev)
 {
     ARG_UNUSED(dev);
 
-    k_mutex_init(&mutex);
+    k_sem_init(&mdm_sem, 1, 1);
 
     receive_callback(receive_cb);
 
