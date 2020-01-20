@@ -67,6 +67,7 @@ static void clear_socket(int sock_fd)
 
 static int offload_close(int sock_fd)
 {
+    LOG_INF("next= %d", next_free_socket);
     if (!VALID_SOCKET(sock_fd))
     {
         return -EINVAL;
@@ -88,6 +89,7 @@ static int offload_close(int sock_fd)
 static int offload_connect(int sock_fd, const struct sockaddr *addr,
                            socklen_t addrlen)
 {
+    LOG_INF("next= %d", next_free_socket);
     if (!VALID_SOCKET(sock_fd))
     {
         return -EINVAL;
@@ -115,7 +117,7 @@ static int offload_poll(struct pollfd *fds, int nfds, int msecs)
         return -EINVAL;
     }
     k_sem_take(&mdm_sem, K_FOREVER);
-    // at_poll(10);
+    at_poll(10);
     for (int i = 0; i < nfds; i++)
     {
         if (!VALID_SOCKET(fds[i].fd))
@@ -136,6 +138,7 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
                             short int flags, struct sockaddr *from,
                             socklen_t *fromlen)
 {
+    LOG_INF("next= %d", next_free_socket);
     ARG_UNUSED(flags);
     if (!VALID_SOCKET(sock_fd))
     {
@@ -193,6 +196,7 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
 
 static int offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
 {
+    LOG_INF("next= %d", next_free_socket);
     ARG_UNUSED(flags);
     LOG_INF("recv()");
 
@@ -222,6 +226,7 @@ static int offload_sendto(int sock_fd, const void *buf, size_t len,
                           int flags, const struct sockaddr *to,
                           socklen_t tolen)
 {
+    LOG_INF("next= %d", next_free_socket);
     if (!VALID_SOCKET(sock_fd))
     {
         LOG_ERR("Invalid socket fd: %d", sock_fd);

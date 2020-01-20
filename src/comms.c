@@ -14,7 +14,7 @@ LOG_MODULE_REGISTER(comms);
 #include "at_commands.h"
 
 // Ring buffer size
-#define RB_SIZE 256
+#define RB_SIZE 1024
 
 // Underlying ring buffer
 static u8_t buffer[RB_SIZE];
@@ -39,6 +39,8 @@ static struct device *uart_dev;
  */
 static void uart_isr(void *user_data)
 {
+    static char prev = '\n';
+    static bool in_urc = false;
     struct device *dev = (struct device *)user_data;
     uint8_t data;
     int rx, rb;
@@ -51,12 +53,28 @@ static void uart_isr(void *user_data)
             return;
         }
         //printf("%c", data);
+        if (prev == '\n' && data == '+')
+        {
+            printf("\nURC: ");
+            in_urc = true;
+        }
+        if (in_urc && data == '\r')
+        {
+            printf("\n");
+            in_urc = false;
+        }
+        if (in_urc)
+        {
+            // Send to URC thread
+            printf("%c", (char)data);
+        }
         rb = ring_buf_put(&rx_rb, &data, 1);
         if (rb != rx)
         {
             LOG_ERR("RX buffer is full. Bytes pending: %d, written: %d", rx, rb);
             return;
         }
+        prev = data;
         k_sem_give(&rx_sem);
     }
 }
@@ -67,7 +85,6 @@ void modem_write(const char *cmd)
     size_t data_size = strlen(cmd);
     do
     {
-        printf("%c", *buf);
         uart_poll_out(uart_dev, *buf++);
     } while (--data_size);
 }
@@ -79,7 +96,6 @@ bool modem_read(uint8_t *b, int32_t timeout)
     case 0:
         if (ring_buf_get(&rx_rb, b, 1) == 1)
         {
-            printf("%c", (char)*b);
             return true;
         }
         break;
@@ -97,7 +113,7 @@ void modem_init(void)
     uart_dev = device_get_binding("UART_0");
     if (!uart_dev)
     {
-        LOG_ERR("Unable to load UART device. GPS Thread cannot continue.");
+        LOG_ERR("Unable to load UART device");
         return;
     }
     uart_irq_callback_user_data_set(uart_dev, uart_isr, uart_dev);
