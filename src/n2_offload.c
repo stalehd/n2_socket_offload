@@ -3,7 +3,7 @@
  *
 ß * SPDX-License-Identifier: Apache-2.0
  */
-
+#include <stdio.h>
 #include <logging/log.h>
 #define LOG_LEVEL LOG_LEVEL_DBG
 LOG_MODULE_REGISTER(sara_n2);
@@ -39,7 +39,7 @@ static struct n2_socket sockets[MDM_MAX_SOCKETS];
 static int next_free_socket = 0;
 static int next_free_port = 6000;
 
-#define CMD_BUFFER_SIZE 32
+#define CMD_BUFFER_SIZE 64
 static char modem_command_buffer[CMD_BUFFER_SIZE];
 
 #define CMD_TIMEOUT 2000
@@ -67,7 +67,6 @@ static void clear_socket(int sock_fd)
 
 static int offload_close(int sock_fd)
 {
-    LOG_INF("next= %d", next_free_socket);
     if (!VALID_SOCKET(sock_fd))
     {
         return -EINVAL;
@@ -89,7 +88,6 @@ static int offload_close(int sock_fd)
 static int offload_connect(int sock_fd, const struct sockaddr *addr,
                            socklen_t addrlen)
 {
-    LOG_INF("next= %d", next_free_socket);
     if (!VALID_SOCKET(sock_fd))
     {
         return -EINVAL;
@@ -116,8 +114,8 @@ static int offload_poll(struct pollfd *fds, int nfds, int msecs)
         LOG_ERR("poll has invalid nfds: %d", nfds);
         return -EINVAL;
     }
+    k_sleep(400);
     k_sem_take(&mdm_sem, K_FOREVER);
-    at_poll(10);
     for (int i = 0; i < nfds; i++)
     {
         if (!VALID_SOCKET(fds[i].fd))
@@ -125,6 +123,7 @@ static int offload_poll(struct pollfd *fds, int nfds, int msecs)
             fds[i].revents = POLLNVAL;
             continue;
         }
+        fds[i].revents = POLLOUT;
         if (sockets[fds[i].fd].incoming_len > 0)
         {
             fds[i].revents |= POLLIN;
@@ -138,7 +137,6 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
                             short int flags, struct sockaddr *from,
                             socklen_t *fromlen)
 {
-    LOG_INF("next= %d", next_free_socket);
     ARG_UNUSED(flags);
     if (!VALID_SOCKET(sock_fd))
     {
@@ -152,11 +150,11 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
     // you receive the +NSONMI URC from the module you'll get just three fields
     // in return: socket, data, remaining. IT WOULD HAVE BEEN REALLY NICE IF THE
     // DOCUMENTATION INCLUDED THIS.
+
     if (sockets[sock_fd].incoming_len == 0)
     {
-        LOG_INF("Popping the cherry");
-        modem_write("AT\r\n");
-        at_decode();
+        k_sem_give(&mdm_sem);
+        return 0;
     }
 
     // Use NSORF to read incoming data.
@@ -168,6 +166,7 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
     size_t remain = 0;
     int sockfd = 0;
     size_t received = 0;
+
     if (atnsorf_decode(&sockfd, ip, &port, buf, &received, &remain) == AT_OK)
     {
         if (received == 0)
@@ -186,7 +185,6 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
             inet_pton(AF_INET, ip, &((struct sockaddr_in *)from)->sin_addr);
         }
         sockets[sock_fd].incoming_len = remain;
-        LOG_INF("recv(fd=%d, len=%d, remain=%d)", sock_fd, len, remain);
         k_sem_give(&mdm_sem);
         return received;
     }
@@ -196,9 +194,7 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
 
 static int offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
 {
-    LOG_INF("next= %d", next_free_socket);
     ARG_UNUSED(flags);
-    LOG_INF("recv()");
 
     if (!VALID_SOCKET(sock_fd))
     {
@@ -209,16 +205,27 @@ static int offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
     if (!sockets[sock_fd].connected)
     {
         k_sem_give(&mdm_sem);
+        LOG_ERR("Socket isn't connected (fd=%d)", sock_fd);
         return -EINVAL;
     }
 
-    while (sockets[sock_fd].incoming_len == 0)
+    if (sockets[sock_fd].incoming_len == 0 && ((flags & MSG_DONTWAIT) == MSG_DONTWAIT))
     {
-        // We'll need to poll for URC
-        at_poll(500);
+        return 0;
     }
-    LOG_INF("recv() call recvfrom(max_len=%d)", max_len);
+
+    int curcount = sockets[sock_fd].incoming_len;
     k_sem_give(&mdm_sem);
+
+    while (curcount == 0)
+    {
+        // busy wait for data
+        k_sleep(1000);
+        k_sem_take(&mdm_sem, K_FOREVER);
+        curcount = sockets[sock_fd].incoming_len;
+        k_sem_give(&mdm_sem);
+    }
+    LOG_DBG("Got data (%d bytes). Use recvfrom()", curcount);
     return offload_recvfrom(sock_fd, buf, max_len, flags, NULL, NULL);
 }
 
@@ -226,7 +233,6 @@ static int offload_sendto(int sock_fd, const void *buf, size_t len,
                           int flags, const struct sockaddr *to,
                           socklen_t tolen)
 {
-    LOG_INF("next= %d", next_free_socket);
     if (!VALID_SOCKET(sock_fd))
     {
         LOG_ERR("Invalid socket fd: %d", sock_fd);
@@ -240,6 +246,7 @@ static int offload_sendto(int sock_fd, const void *buf, size_t len,
     }
 
     k_sem_take(&mdm_sem, K_FOREVER);
+
     struct sockaddr_in *toaddr = (struct sockaddr_in *)to;
 
     char addr[64];
@@ -250,11 +257,13 @@ static int offload_sendto(int sock_fd, const void *buf, size_t len,
         k_sem_give(&mdm_sem);
         return -EINVAL;
     }
+
     sprintf(modem_command_buffer,
             "AT+NSOST=%d,\"%s\",%d,%d,\"",
             sockets[sock_fd].id, addr,
             ntohs(toaddr->sin_port),
             len);
+
     modem_write(modem_command_buffer);
 
     char byte[3];
@@ -283,6 +292,7 @@ static int offload_sendto(int sock_fd, const void *buf, size_t len,
         break;
     }
     k_sem_give(&mdm_sem);
+
     return written;
 }
 
@@ -301,11 +311,9 @@ static int offload_send(int sock_fd, const void *buf, size_t len, int flags)
         k_sem_give(&mdm_sem);
         return -ENOTCONN;
     }
-    LOG_INF("send(fd=%d, len=%i)", sock_fd, len);
     k_sem_give(&mdm_sem);
     int ret = offload_sendto(sock_fd, buf, len, flags,
                              sockets[sock_fd].remote_addr, sockets[sock_fd].remote_len);
-    LOG_INF("send(fd=%d, len=%i) completed (ret=%d)", sock_fd, len, ret);
     return ret;
 }
 
@@ -345,7 +353,7 @@ static int offload_socket(int family, int type, int proto)
     if (atnsocr_decode(&sockfd) == AT_OK)
     {
         sockets[fd].id = sockfd;
-        LOG_INF("socket() end: Created socket. fd = %d, modem fd = %d, local port = %d, next= %d", fd, sockets[fd].id, sockets[fd].local_port, next_free_socket);
+        LOG_DBG("Created socket. fd = %d, modem fd = %d, local port = %d, next= %d", fd, sockets[fd].id, sockets[fd].local_port, next_free_socket);
         k_sem_give(&mdm_sem);
         return fd;
     }
@@ -402,14 +410,16 @@ static struct net_if_api api_funcs = {
 
 static void receive_cb(int fd, size_t bytes)
 {
-    LOG_INF("Received %d bytes from socket %d", bytes, fd);
+    k_sem_take(&mdm_sem, K_FOREVER);
     for (int i = 0; i < MDM_MAX_SOCKETS; i++)
     {
         if (sockets[i].id == fd)
         {
+            LOG_DBG("Received %d bytes from socket %d", bytes, fd);
             sockets[i].incoming_len += bytes;
         }
     }
+    k_sem_give(&mdm_sem);
 }
 // _init initializes the network offloading
 static int n2_init(struct device *dev)
@@ -422,12 +432,12 @@ static int n2_init(struct device *dev)
 
     modem_init();
     modem_restart();
-    LOG_INF("Waiting for modem to connect...");
+    LOG_DBG("Waiting for modem to connect...");
     while (!modem_is_ready())
     {
         k_sleep(K_MSEC(2000));
     }
-    LOG_INF("Modem is ready. Turning off PSM");
+    LOG_DBG("Modem is ready. Turning off PSM");
     modem_write("AT+CPSMS=0\r\n");
     if (atcpsms_decode() != AT_OK)
     {

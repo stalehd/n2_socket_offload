@@ -12,13 +12,6 @@ LOG_MODULE_REGISTER(at_commands);
 
 #define CMD_TIMEOUT K_MSEC(10000)
 
-static at_callback_t recv_cb = NULL;
-
-void receive_callback(at_callback_t receive_cb)
-{
-    recv_cb = receive_cb;
-}
-
 // Ring buffer size. The ring buffer holds just enough bytes to detect the
 // different responses/fields.
 #define B_SIZE 10
@@ -85,12 +78,6 @@ int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callba
     b_init(&rb);
     uint8_t b, prev = ' ';
     bool is_urc = false;
-    bool receive_notification = false;
-    // data may be n,nnn
-    char receive_count[5];
-    int idx = 0;
-
-    memset(receive_count, 0, sizeof(receive_count));
 
     while (modem_read(&b, timeout))
     {
@@ -107,32 +94,10 @@ int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callba
             }
             b_reset(&rb);
             is_urc = false;
-            if (receive_notification)
-            {
-                if (recv_cb)
-                {
-                    char *countptr = NULL;
-                    char *fdptr = receive_count;
-                    for (int i = 0; i < sizeof(receive_count); i++)
-                    {
-                        if (receive_count[i] == ',')
-                        {
-                            countptr = (receive_count + i + 1);
-                            receive_count[i] = 0;
-                        }
-                    }
-                    recv_cb(atoi(fdptr), atoi(countptr));
-                }
-                receive_notification = false;
-            }
         }
         if (char_cb)
         {
             char_cb(ctx, &rb, b, is_urc, isspace(b));
-        }
-        if (is_urc && receive_notification && !isspace(b))
-        {
-            receive_count[idx++] = b;
         }
         if (rb.size >= 2)
         {
@@ -150,11 +115,7 @@ int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callba
         //  - NPSMR
         //  - CSCON
         //  - UFOTAS
-        if (is_urc && rb.size == 8 && b_is(&rb, "+NSONMI:", 8))
-        {
-            // capture this URC
-            receive_notification = true;
-        }
+
         prev = b;
     }
     return AT_TIMEOUT;
@@ -333,7 +294,7 @@ void nsorf_char(void *ctx, struct buf *rb, char b, bool is_urc, bool is_space)
             break;
         default:
             // Should not encounter field #5 here
-            printf("Too many fields (%d) in response\n", c->fieldno);
+            LOG_ERR("Too many fields (%d) in response\n", c->fieldno);
             return;
         }
         memset(c->field, 0, MAX_FIELD_SIZE);

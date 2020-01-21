@@ -6,7 +6,7 @@
 
 // This is the model number reported by the LwM2M client. It is an arbitrary
 // string and will be exposed by the Horde API.
-#define CLIENT_MODEL_NUMBER "EE-FOTA-00"
+#define CLIENT_MODEL_NUMBER "EE-N2-00"
 
 // This is the serial number reported by the LwM2M client. If you have some
 // kind of serial number available you can use that, otherwise the IMEI (the

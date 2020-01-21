@@ -9,18 +9,6 @@
 #define AT_TIMEOUT -2
 
 /**
- * @brief Callback for receive notifications.
- */
-typedef void (*at_callback_t)(int fd, size_t bytes);
-
-/**
- * @brief Set callback function for new data notifications. This function is
- *        called whenever a +NSOMNI message is received from the modem.
- * @note  Only a single callback can be registered.
- */
-void receive_callback(at_callback_t receive_cb);
-
-/**
  * @brief  Decode AT+NSORF response. The buffer is read in multiple chunks from
  *         the modem.
  * @return -1 for ERROR response, -2 for timeout, number of bytes decoded otherwise
