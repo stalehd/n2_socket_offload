@@ -25,17 +25,14 @@ static uint8_t urcbuffer[URC_SIZE];
 static struct ring_buf urc_rb;
 static struct k_sem rx_sem;
 
-// UART device
-static struct device *uart_dev;
 
 #define URC_THREAD_STACK 512
 #define URC_THREAD_PRIORITY (CONFIG_NUM_COOP_PRIORITIES)
-
+#define UART_NAME "UART_0"
 #define DUMP_MODEM 0
 
 struct k_thread urc_thread;
 
-/* URC thread structures */
 K_THREAD_STACK_DEFINE(urc_thread_stack,
                       URC_THREAD_STACK);
 
@@ -144,6 +141,12 @@ void modem_write(const char *cmd)
 #if DUMP_MODEM
     printk("%s", cmd);
 #endif
+    struct device *uart_dev = device_get_binding(UART_NAME);
+	if (!uart_dev) {
+		LOG_ERR("Cannot get UART device");
+		return;
+	}
+
     for (int i = 0; i < strlen(cmd); i++)
     {
         uart_poll_out(uart_dev, (unsigned char)cmd[i]);
@@ -190,6 +193,7 @@ void modem_restart()
 
 void modem_init(void)
 {
+    LOG_DBG("Modem init");
     k_sem_init(&rx_sem, 0, RB_SIZE);
     ring_buf_init(&rx_rb, RB_SIZE, buffer);
     k_sem_init(&urc_sem, 0, URC_SIZE);
@@ -200,13 +204,28 @@ void modem_init(void)
                     (k_thread_entry_t)urc_threadproc,
                     NULL, NULL, NULL, K_PRIO_COOP(URC_THREAD_PRIORITY), 0, K_NO_WAIT);
 
-    uart_dev = device_get_binding("UART_0");
+
+    struct device *uart_dev = device_get_binding(UART_NAME);
     if (!uart_dev)
     {
         LOG_ERR("Unable to load UART device");
         return;
     }
+
+    /*
+    struct uart_config cfg;
+    int rc = uart_config_get(uart_dev, &cfg);
+    if (rc == 0)
+    {
+        LOG_INF("UART config      baud: %d", cfg.baudrate);
+        LOG_INF("            data bits: %d", cfg.data_bits);
+        LOG_INF("            flow_ctrl: %d", cfg.flow_ctrl);
+        LOG_INF("               parity: %d", cfg.parity);
+        LOG_INF("            stop_bits: %d", cfg.stop_bits);
+    }*/
+
     uart_irq_callback_user_data_set(uart_dev, uart_isr, uart_dev);
     uart_irq_rx_enable(uart_dev);
+
     LOG_DBG("UART device loaded.");
 }

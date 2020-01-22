@@ -44,7 +44,7 @@ int atnsocl_decode();
  * @return 0 for OK, -1 for ERROR, -2 for timeout
  * @note   Will swallow URCs and call the appropriate callbacks
  */
-int atnsost_decode();
+int atnsost_decode(int *sock_fd, size_t *sent);
 
 /**
  * @brief Reads response from AT+NRB command. Reads until OK or ERROR is received.

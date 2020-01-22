@@ -114,7 +114,6 @@ static int offload_poll(struct pollfd *fds, int nfds, int msecs)
         LOG_ERR("poll has invalid nfds: %d", nfds);
         return -EINVAL;
     }
-    k_sleep(400);
     k_sem_take(&mdm_sem, K_FOREVER);
     for (int i = 0; i < nfds; i++)
     {
@@ -154,7 +153,8 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
     if (sockets[sock_fd].incoming_len == 0)
     {
         k_sem_give(&mdm_sem);
-        return 0;
+        errno = -EWOULDBLOCK;
+        return -EAGAIN;
     }
 
     // Use NSORF to read incoming data.
@@ -212,7 +212,8 @@ static int offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
     if (sockets[sock_fd].incoming_len == 0 && ((flags & MSG_DONTWAIT) == MSG_DONTWAIT))
     {
         k_sem_give(&mdm_sem);
-        return 0;
+        errno = -EWOULDBLOCK;
+        return -EAGAIN;
     }
 
     int curcount = sockets[sock_fd].incoming_len;
@@ -279,9 +280,12 @@ static int offload_sendto(int sock_fd, const void *buf, size_t len,
     modem_write("\"\r");
 
     int written = len;
-    switch (atnsost_decode())
+    int fd = -1;
+    size_t sent = 0;
+    switch (atnsost_decode(&fd, &sent))
     {
     case AT_OK:
+        LOG_DBG("Sent %d bytes on fd=%d", sent, fd);
         break;
     case AT_ERROR:
         LOG_ERR("ERROR response");
@@ -427,12 +431,31 @@ static int n2_init(struct device *dev)
 {
     ARG_UNUSED(dev);
 
+    LOG_DBG("N2 init");
+
     k_sem_init(&mdm_sem, 1, 1);
 
     receive_callback(receive_cb);
 
     modem_init();
-    modem_restart();
+
+    modem_write("AT+NSOCL=0\r");
+    at_decode();
+    modem_write("AT+NSOCL=1\r");
+    at_decode();
+    modem_write("AT+NSOCL=2\r");
+    at_decode();
+    modem_write("AT+NSOCL=3\r");
+    at_decode();
+    modem_write("AT+NSOCL=4\r");
+    at_decode();
+    modem_write("AT+NSOCL=5\r");
+    at_decode();
+    modem_write("AT+NSOCL=6\r");
+    at_decode();
+
+    //modem_restart();
+
 
     LOG_DBG("Waiting for modem to connect...");
     while (!modem_is_ready())
@@ -450,11 +473,11 @@ static int n2_init(struct device *dev)
         LOG_INF("IMSI for modem is %s", log_strdup(imsi));
     }
     LOG_DBG("Modem is ready. Turning off PSM");
-    modem_write("AT+CPSMS=0\r");
+/*    modem_write("AT+CPSMS=0\r");
     if (atcpsms_decode() != AT_OK)
     {
         LOG_ERR("Unable to turn off PSM for modem");
-    }
+    }*/
     return 0;
 }
 

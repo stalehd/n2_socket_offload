@@ -227,9 +227,27 @@ struct nsost_ctx
     size_t *len;
 };
 
-int atnsost_decode()
+void nsost_eol(void *ctx, struct buf *rb, bool is_urc)
 {
-    return decode_input(CMD_TIMEOUT, NULL, NULL, NULL);
+    struct nsost_ctx *c = (struct nsost_ctx *)ctx;
+        // Socket descriptor is *always* a single digit, ie the comma would be
+        // the 2nd char
+    if (!is_urc && *c->len == 0 && rb->size > 2 && rb->data[1] == ',') {
+        *c->sockfd = (int)(rb->data[0] - '0');
+        if (*c->sockfd >= 7) {
+            LOG_ERR("Socket fd should be <= 6 but is '%c'", rb->data[0]);
+        }
+        *c->len = atoi(rb->data + 2);
+    }
+}
+
+int atnsost_decode(int *sock_fd, size_t *sent)
+{
+    struct nsost_ctx ctx = {
+        .sockfd = sock_fd,
+        .len = sent,
+    };
+    return decode_input(CMD_TIMEOUT, &ctx, NULL, nsost_eol);
 }
 
 // Decode NSORF responses. Each field is decoded separately and stored off in

@@ -28,7 +28,7 @@ LOG_MODULE_REGISTER(app);
 #include "at_commands.h"
 #include "fota.h"
 
-#define UDP_MESSAGE "Hello there"
+#define UDP_MESSAGE "Hello there I'm the UDP message that you've been waiting on."
 
 void udpTest()
 {
@@ -57,15 +57,17 @@ void udpTest()
         close(sock);
         return;
     }
-    LOG_DBG("Connected, sending message");
-    err = send(sock, UDP_MESSAGE, strlen(UDP_MESSAGE), 0);
-    if (err < strlen(UDP_MESSAGE))
-    {
-        LOG_ERR("Error sending: %d", err);
-        close(sock);
-        return;
+    for (int i = 0; i < 10; i++) {
+        LOG_DBG("Connected, sending message %d...", i);
+        err = send(sock, UDP_MESSAGE, strlen(UDP_MESSAGE), 0);
+        if (err < strlen(UDP_MESSAGE))
+        {
+            LOG_ERR("Error sending: %d", err);
+            close(sock);
+            return;
+        }
+        k_sleep(1000);
     }
-
     LOG_DBG("Message sent, waiting for downstream message");
 
 #define BUF_LEN 12
@@ -124,8 +126,8 @@ void fotaTest()
 
 #define COAP_HOST "172.16.15.14"
 #define COAP_PORT 5683
-#define COAP_PAYLOAD "Hello there, I'm sent via CoAP"
-#define COAP_PATH "coap/zephyr"
+#define COAP_PAYLOAD "Hello there, I'm sent via CoAP and I'm a really long packet that you send via CoAP"
+#define COAP_PATH "coap/zephyr/big"
 
 char payload[100];
 
@@ -208,16 +210,18 @@ void modemTest()
         LOG_ERR("Unable to decode nsocr");
         return;
     }
+    modem_write("AT\r");
+    at_decode();
 
-    k_sleep(1000);
-
-    modem_write("AT+NSOST=0,\"172.16.15.14\",1234,6,\"466F6F426172\"\r");
-    if (atnsost_decode() != AT_OK)
+    modem_write("AT+NSOST=0,\"172.16.15.14\",1234,6,\"AABBAAAABBAA\"\r");
+    int fd = -1;
+    size_t size = 0;
+    if (atnsost_decode(&fd, &size) != AT_OK)
     {
-        LOG_ERR("Unable to decode nsost");
+        LOG_ERR("NSOS sent error nsost");
         return;
     }
-    LOG_INF("Message sent, waiting for response");
+    LOG_INF("Message sent (fd=%d,len=%d), waiting for response", fd, size);
 
     while (received == 0)
     {
@@ -246,7 +250,7 @@ void main(void)
 {
     LOG_DBG("Start");
 
-    udpTest();
+    coapTest();
 
     LOG_DBG("Halting firmware");
 }
