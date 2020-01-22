@@ -25,9 +25,11 @@ LOG_MODULE_REGISTER(app);
 #include <net/coap.h>
 
 #include "comms.h"
+#include "at_commands.h"
 #include "fota.h"
 
-#define UDP_MESSAGE "Hello there II"
+#define UDP_MESSAGE "Hello there"
+
 void udpTest()
 {
     LOG_DBG("Sending packet (%s)", log_strdup(UDP_MESSAGE));
@@ -98,6 +100,7 @@ void udpTest()
         }
     }
     close(sock);
+    LOG_INF("Done socket");
 }
 
 void fotaTest()
@@ -186,8 +189,63 @@ void coapTest()
     close(sock);
 }
 
+static int received = 0;
+static void recv_cb(int sockfd, size_t len)
+{
+    LOG_INF("Got %d bytes on socket %d", len, sockfd);
+    received = len;
+}
+
+void modemTest()
+{
+    int sockfd = -1;
+
+    receive_callback(recv_cb);
+
+    modem_write("AT+NSOCR=\"DGRAM\",17,6001,1\r");
+    if (atnsocr_decode(&sockfd) != AT_OK)
+    {
+        LOG_ERR("Unable to decode nsocr");
+        return;
+    }
+
+    k_sleep(1000);
+
+    modem_write("AT+NSOST=0,\"172.16.15.14\",1234,6,\"466F6F426172\"\r");
+    if (atnsost_decode() != AT_OK)
+    {
+        LOG_ERR("Unable to decode nsost");
+        return;
+    }
+    LOG_INF("Message sent, waiting for response");
+
+    while (received == 0)
+    {
+        k_sleep(1000);
+    }
+    char ip[32];
+    char data[34];
+    int port;
+    memset(data, 0, sizeof(data));
+    size_t received;
+    size_t remaining;
+    modem_write("AT+NSORF=0,32\r");
+    if (atnsorf_decode(&sockfd, (char *)&ip, &port, (uint8_t *)&data, &received, &remaining) != AT_OK)
+    {
+        LOG_ERR("Unable to decode nsorf");
+    }
+
+    modem_write("AT+NSOCL=0\r");
+    if (atnsocl_decode() != AT_OK)
+    {
+        LOG_ERR("Unable to decode nsocl");
+    }
+}
+
 void main(void)
 {
+    LOG_DBG("Start");
+
     udpTest();
 
     LOG_DBG("Halting firmware");

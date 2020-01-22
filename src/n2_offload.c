@@ -72,7 +72,7 @@ static int offload_close(int sock_fd)
         return -EINVAL;
     }
     k_sem_take(&mdm_sem, K_FOREVER);
-    sprintf(modem_command_buffer, "AT+NSOCL=%d\r\n", sockets[sock_fd].id);
+    sprintf(modem_command_buffer, "AT+NSOCL=%d\r", sockets[sock_fd].id);
     modem_write(modem_command_buffer);
 
     if (atnsocl_decode() != AT_OK)
@@ -158,7 +158,7 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
     }
 
     // Use NSORF to read incoming data.
-    sprintf(modem_command_buffer, "AT+NSORF=%d,%d\r\n", sockets[sock_fd].id, len);
+    sprintf(modem_command_buffer, "AT+NSORF=%d,%d\r", sockets[sock_fd].id, len);
     modem_write(modem_command_buffer);
 
     char ip[16];
@@ -211,6 +211,7 @@ static int offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
 
     if (sockets[sock_fd].incoming_len == 0 && ((flags & MSG_DONTWAIT) == MSG_DONTWAIT))
     {
+        k_sem_give(&mdm_sem);
         return 0;
     }
 
@@ -275,7 +276,7 @@ static int offload_sendto(int sock_fd, const void *buf, size_t len,
         modem_write(byte);
     }
 
-    modem_write("\"\r\n");
+    modem_write("\"\r");
 
     int written = len;
     switch (atnsost_decode())
@@ -346,7 +347,7 @@ static int offload_socket(int family, int type, int proto)
     sockets[fd].local_port = next_free_port;
     next_free_port++;
 
-    sprintf(modem_command_buffer, "AT+NSOCR=\"DGRAM\",17,%d,1\r\n", sockets[fd].local_port);
+    sprintf(modem_command_buffer, "AT+NSOCR=\"DGRAM\",17,%d,1\r", sockets[fd].local_port);
     modem_write(modem_command_buffer);
 
     int sockfd = -1;
@@ -432,13 +433,24 @@ static int n2_init(struct device *dev)
 
     modem_init();
     modem_restart();
+
     LOG_DBG("Waiting for modem to connect...");
     while (!modem_is_ready())
     {
         k_sleep(K_MSEC(2000));
     }
+    modem_write("AT+CIMI\r");
+    char imsi[24];
+    if (atcimi_decode((char *)&imsi) != AT_OK)
+    {
+        LOG_ERR("Unable to retrieve IMSI from modem");
+    }
+    else
+    {
+        LOG_INF("IMSI for modem is %s", log_strdup(imsi));
+    }
     LOG_DBG("Modem is ready. Turning off PSM");
-    modem_write("AT+CPSMS=0\r\n");
+    modem_write("AT+CPSMS=0\r");
     if (atcpsms_decode() != AT_OK)
     {
         LOG_ERR("Unable to turn off PSM for modem");

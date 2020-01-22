@@ -31,7 +31,7 @@ static struct device *uart_dev;
 #define URC_THREAD_STACK 512
 #define URC_THREAD_PRIORITY (CONFIG_NUM_COOP_PRIORITIES)
 
-#define DUMP_MODEM 1
+#define DUMP_MODEM 0
 
 struct k_thread urc_thread;
 
@@ -141,12 +141,12 @@ static void uart_isr(void *user_data)
 
 void modem_write(const char *cmd)
 {
-    for (uint8_t i = 0; i < strlen(cmd); i++)
-    {
 #if DUMP_MODEM
-        printk("%c", cmd[i]);
+    printk("%s", cmd);
 #endif
-        uart_poll_out(uart_dev, cmd[i]);
+    for (int i = 0; i < strlen(cmd); i++)
+    {
+        uart_poll_out(uart_dev, (unsigned char)cmd[i]);
     }
 }
 
@@ -175,6 +175,7 @@ bool modem_is_ready()
     {
         if (len > 1)
         {
+            LOG_INF("Reported IP address is %s", log_strdup(ip));
             return true;
         }
     }
@@ -207,7 +208,5 @@ void modem_init(void)
     }
     uart_irq_callback_user_data_set(uart_dev, uart_isr, uart_dev);
     uart_irq_rx_enable(uart_dev);
-    modem_write("AT+CIMI\r\n");
-    at_decode();
     LOG_DBG("UART device loaded.");
 }

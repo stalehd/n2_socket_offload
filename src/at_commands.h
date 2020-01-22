@@ -53,6 +53,12 @@ int atnsost_decode();
  */
 int atnrb_decode();
 
+/**
+ * @brief decode AT+CIMI response from modem
+ * @note buffer should have enough room for IMSIs (22 chars)
+ */
+int atcimi_decode(char *imsi);
+
 int atcpsms_decode();
 
 int at_decode();

@@ -10,7 +10,8 @@
 #define LOG_LEVEL LOG_LEVEL_DBG
 LOG_MODULE_REGISTER(at_commands);
 
-#define CMD_TIMEOUT K_MSEC(10000)
+#define CMD_TIMEOUT K_MSEC(2000)
+#define CMD_REBOOT_TIMEOUT K_MSEC(15000)
 
 // Ring buffer size. The ring buffer holds just enough bytes to detect the
 // different responses/fields.
@@ -37,10 +38,6 @@ void b_init(struct buf *rb)
 }
 void b_add(struct buf *rb, uint8_t b)
 {
-    if (b == '\r' || b == '\n')
-    {
-        return;
-    }
     if (rb->index < B_SIZE)
     {
         rb->data[rb->index++] = b;
@@ -86,6 +83,21 @@ int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callba
             is_urc = true;
         }
         b_add(&rb, b);
+        if (char_cb)
+        {
+            char_cb(ctx, &rb, b, is_urc, isspace(b));
+        }
+        if (rb.size >= 4)
+        {
+            if (b_is(&rb, "OK\r\n", 4))
+            {
+                return AT_OK;
+            }
+            if (b_is(&rb, "ERROR\r\n", 7))
+            {
+                return AT_ERROR;
+            }
+        }
         if (prev == '\r' && b == '\n')
         {
             if (eol_cb)
@@ -95,21 +107,6 @@ int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callba
             b_reset(&rb);
             is_urc = false;
         }
-        if (char_cb)
-        {
-            char_cb(ctx, &rb, b, is_urc, isspace(b));
-        }
-        if (rb.size >= 2)
-        {
-            if (b_is(&rb, "OK", 2))
-            {
-                return AT_OK;
-            }
-            if (b_is(&rb, "ERROR", 5))
-            {
-                return AT_ERROR;
-            }
-        }
         // Additional URCs to support:
         //  - CEREG
         //  - NPSMR
@@ -118,12 +115,13 @@ int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callba
 
         prev = b;
     }
+    LOG_WRN("Decode timeout");
     return AT_TIMEOUT;
 }
 
 int atnrb_decode()
 {
-    return decode_input(CMD_TIMEOUT, NULL, NULL, NULL);
+    return decode_input(CMD_REBOOT_TIMEOUT, NULL, NULL, NULL);
 }
 
 // Just wait for OK or ERROR
@@ -343,4 +341,41 @@ int at_decode()
 int at_poll(int32_t timeout)
 {
     return decode_input(CMD_TIMEOUT, NULL, NULL, NULL);
+}
+
+struct cimi_ctx
+{
+    char *imsi;
+    uint8_t index;
+    bool done;
+};
+
+void cimi_char(void *ctx, struct buf *rb, char b, bool is_urc, bool is_space)
+{
+    struct cimi_ctx *c = (struct cimi_ctx *)ctx;
+    if (!c->done && !is_urc && !is_space)
+    {
+        struct cimi_ctx *c = (struct cimi_ctx *)ctx;
+        c->imsi[c->index++] = b;
+    }
+}
+
+void cimi_eol(void *ctx, struct buf *rb, bool is_urc)
+{
+    struct cimi_ctx *c = (struct cimi_ctx *)ctx;
+    if (!c->done && c->index > 0)
+    {
+        c->imsi[c->index] = 0;
+        c->done = true;
+    }
+}
+
+int atcimi_decode(char *imsi)
+{
+    struct cimi_ctx ctx = {
+        .imsi = imsi,
+        .index = 0,
+        .done = false,
+    };
+    return decode_input(CMD_TIMEOUT, &ctx, cimi_char, cimi_eol);
 }
