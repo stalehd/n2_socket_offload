@@ -59,13 +59,11 @@ void testUDPCounter()
 }
 
 
-#define UDP_MESSAGE "Hello there I'm the UDP message that you've been waiting on."
+#define UDP_MESSAGE "Hello there I'm the UDP message 3"
 
 void testUDP()
 {
-    LOG_DBG("Sending packet (%s)", log_strdup(UDP_MESSAGE));
-    int err;
-
+    int err = 0;
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0)
     {
@@ -88,18 +86,17 @@ void testUDP()
         close(sock);
         return;
     }
-    for (int i = 0; i < 10; i++) {
-        LOG_DBG("Connected, sending message %d...", i);
-        err = send(sock, UDP_MESSAGE, strlen(UDP_MESSAGE), 0);
-        if (err < strlen(UDP_MESSAGE))
-        {
-            LOG_ERR("Error sending: %d", err);
-            close(sock);
-            return;
-        }
-        k_sleep(1000);
+
+    LOG_DBG("Sending a single message");
+    err = send(sock, UDP_MESSAGE, strlen(UDP_MESSAGE), 0);
+    if (err < strlen(UDP_MESSAGE))
+    {
+        LOG_ERR("Error sending: %d", err);
+        close(sock);
+        return;
     }
-    LOG_DBG("Message sent, waiting for downstream message");
+
+    LOG_DBG("Wait for packet");
 
 #define BUF_LEN 12
     u8_t buffer[BUF_LEN + 1];
@@ -120,18 +117,27 @@ void testUDP()
     {
         memset(buffer, 0, BUF_LEN);
         err = recv(sock, buffer, BUF_LEN, MSG_DONTWAIT);
-        if (err < 0)
-        {
-            LOG_ERR("Error receiving: %d", err);
-            close(sock);
-            return;
-        }
         if (err > 0)
         {
             buffer[err] = 0;
             LOG_INF("Received %d bytes (%s)", err, log_strdup(buffer));
         }
+        if (err < 0 && err != -EAGAIN) {
+            LOG_ERR("Error receiving: %d", err);
+            close(sock);
+            return;
+        }
     }
+
+    LOG_DBG("Connected, sending final message...");
+    err = send(sock, UDP_MESSAGE, strlen(UDP_MESSAGE), 0);
+    if (err < strlen(UDP_MESSAGE))
+    {
+        LOG_ERR("Error sending: %d", err);
+        close(sock);
+        return;
+    }
+
     close(sock);
     LOG_INF("Done socket");
 }

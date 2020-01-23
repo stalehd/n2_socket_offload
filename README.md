@@ -24,12 +24,12 @@ There are a few steps that must be done before the image can be signed. Start by
 
 The boot loader lives in its own repository ([The Zephyr readme for MCUBoot is here](https://mcuboot.com/mcuboot/readme-zephyr.html)) and must be built separately:
 
-
 ...Then run `west build` and `west flash`:
 
 ```
 git clone https://github.com/JuulLabs-OSS/mcuboot
 cd mcuboot/boot/zephyr
+git checkout v1.4.0
 ```
 
 Edit the `prj.conf` file and set the `CONFIG_BOOT_SIGNATURE_KEY_FILE` to point to the key you generated above, add RTT logging at the end (it won't matter but it's nice to see the RTT output from both the bootloader and the image):

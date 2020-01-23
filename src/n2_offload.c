@@ -114,6 +114,7 @@ static int offload_poll(struct pollfd *fds, int nfds, int msecs)
         LOG_ERR("poll has invalid nfds: %d", nfds);
         return -EINVAL;
     }
+    k_sleep(100);
     k_sem_take(&mdm_sem, K_FOREVER);
     for (int i = 0; i < nfds; i++)
     {
@@ -169,6 +170,7 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
 
     if (atnsorf_decode(&sockfd, ip, &port, buf, &received, &remain) == AT_OK)
     {
+        LOG_DBG("decode data (fd=%d bytes=%d, remain=%d)", sockfd, received, remain);
         if (received == 0)
         {
             k_sem_give(&mdm_sem);
@@ -186,6 +188,7 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
         }
         sockets[sock_fd].incoming_len = remain;
         k_sem_give(&mdm_sem);
+        LOG_DBG("recv() got %d bytes from fd=%d (%d remaining)", received, sockfd, remain);
         return received;
     }
     k_sem_give(&mdm_sem);
@@ -225,9 +228,11 @@ static int offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
         k_sleep(1000);
         k_sem_take(&mdm_sem, K_FOREVER);
         curcount = sockets[sock_fd].incoming_len;
+        if (curcount > 0) {
+            LOG_INF("Got data. Great success!");
+        }
         k_sem_give(&mdm_sem);
     }
-    LOG_DBG("Got data (%d bytes). Use recvfrom()", curcount);
     return offload_recvfrom(sock_fd, buf, max_len, flags, NULL, NULL);
 }
 
@@ -285,7 +290,7 @@ static int offload_sendto(int sock_fd, const void *buf, size_t len,
     switch (atnsost_decode(&fd, &sent))
     {
     case AT_OK:
-        LOG_DBG("Sent %d bytes on fd=%d", sent, fd);
+        LOG_DBG("Sucessfully sent %d bytes on fd=%d", sent, fd);
         break;
     case AT_ERROR:
         LOG_ERR("ERROR response");
@@ -419,6 +424,7 @@ static struct net_if_api api_funcs = {
 
 static void receive_cb(int fd, size_t bytes)
 {
+    LOG_DBG("Callback for receive: fd=%d, bytes=%d", fd, bytes);
     k_sem_take(&mdm_sem, K_FOREVER);
     for (int i = 0; i < MDM_MAX_SOCKETS; i++)
     {
@@ -429,7 +435,9 @@ static void receive_cb(int fd, size_t bytes)
         }
     }
     k_sem_give(&mdm_sem);
+    LOG_DBG("Callback for receive completed (fd=%d, bytes=%d)", fd, bytes);
 }
+
 // _init initializes the network offloading
 static int n2_init(struct device *dev)
 {

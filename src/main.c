@@ -27,11 +27,11 @@ LOG_MODULE_REGISTER(app);
 #include "test_coap.h"
 #include "test_modem.h"
 
-void testFOTA()
+void testNoGodNoPleaseNoNoooooooooFOTA()
 {
     // Initialize the application and run any self-tests before calling fota_init.
     // Otherwise, if initialization or self-tests fail after an update, reboot the system and the previous firmware image will be used.
-
+    k_sleep(1000);
     int ret = fota_init();
     if (ret)
     {
@@ -46,12 +46,11 @@ void testFOTA()
     }
 }
 
-
 void main(void)
 {
     LOG_DBG("Start");
 
-    testFOTA();
+    testUDP();
 
     LOG_DBG("Halting firmware");
 }
