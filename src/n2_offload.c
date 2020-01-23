@@ -23,6 +23,7 @@ LOG_MODULE_REGISTER(sara_n2);
 
 // The maximum number of sockets in SARA N2 is 7
 #define MDM_MAX_SOCKETS 7
+#define INVALID_FD -1
 
 struct n2_socket
 {
@@ -36,7 +37,6 @@ struct n2_socket
 };
 
 static struct n2_socket sockets[MDM_MAX_SOCKETS];
-static int next_free_socket = 0;
 static int next_free_port = 6000;
 
 #define CMD_BUFFER_SIZE 64
@@ -340,14 +340,18 @@ static int offload_socket(int family, int type, int proto)
         return -ENOTSUP;
     }
 
-    if (next_free_socket > MDM_MAX_SOCKETS)
-    {
-        LOG_ERR("Max sockets in use (next free=%d)", next_free_socket);
+    k_sem_take(&mdm_sem, K_FOREVER);
+    int fd = INVALID_FD;
+    for (uint8_t i = 0; i < MDM_MAX_SOCKETS; i++) {
+        if (sockets[i].id == INVALID_FD) {
+            fd = i;
+            break;
+        }
+    }
+    if (fd == INVALID_FD) {
+        LOG_ERR("No free sockets");
         return -ENOMEM;
     }
-    k_sem_take(&mdm_sem, K_FOREVER);
-    int fd = next_free_socket;
-    next_free_socket++;
     sockets[fd].local_port = next_free_port;
     next_free_port++;
 
@@ -358,7 +362,7 @@ static int offload_socket(int family, int type, int proto)
     if (atnsocr_decode(&sockfd) == AT_OK)
     {
         sockets[fd].id = sockfd;
-        LOG_DBG("Created socket. fd = %d, modem fd = %d, local port = %d, next= %d", fd, sockets[fd].id, sockets[fd].local_port, next_free_socket);
+        LOG_DBG("Created socket. fd = %d, modem fd = %d, local port = %d", fd, sockets[fd].id, sockets[fd].local_port);
         k_sem_give(&mdm_sem);
         return fd;
     }
@@ -473,11 +477,11 @@ static int n2_init(struct device *dev)
         LOG_INF("IMSI for modem is %s", log_strdup(imsi));
     }
     LOG_DBG("Modem is ready. Turning off PSM");
-/*    modem_write("AT+CPSMS=0\r");
+    modem_write("AT+CPSMS=0\r");
     if (atcpsms_decode() != AT_OK)
     {
         LOG_ERR("Unable to turn off PSM for modem");
-    }*/
+    }
     return 0;
 }
 
