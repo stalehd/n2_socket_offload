@@ -58,3 +58,8 @@ west flash --hex-file build/zephyr/zephyr.signed.hex
 ```
 
 When you reconnect the RTT logger to the device you'll (hopefully) see the firmware boot normally.
+
+
+## What I've learned
+
+The *NMI* part of the `+NSONMI` URC makes the N2 behave... interestingly. If you ignore it you won't be able to read or write sockets until you've sent AT+NSORF to the modem. It will say "OK" whenever you send something but

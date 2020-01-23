@@ -1,8 +1,4 @@
 #include "config.h"
-#include <logging/log.h>
-#define LOG_LEVEL APP_LOG_LEVEL
-LOG_MODULE_REGISTER(udp_test);
-
 #include <zephyr.h>
 #include <stdio.h>
 #include <net/socket.h>
@@ -10,13 +6,13 @@ LOG_MODULE_REGISTER(udp_test);
 
 void testUDPCounter()
 {
-    LOG_DBG("Counting bytes");
+    printf("Counting bytes\n");
     int err;
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0)
     {
-        LOG_ERR("Error opening socket: %d", sock);
+        printf("Error opening socket: %d\n", sock);
         return;
     }
 
@@ -30,7 +26,7 @@ void testUDPCounter()
     err = connect(sock, (struct sockaddr *)&remote_addr, sizeof(remote_addr));
     if (err < 0)
     {
-        LOG_ERR("Unable to connect to backend: %d", err);
+        printf("Unable to connect to backend: %d\n", err);
         close(sock);
         return;
     }
@@ -44,11 +40,11 @@ void testUDPCounter()
         int len = 21 + strlen(buffer);
         sprintf(dump, "%03d bytes on the wall%s", len, buffer);
 
-        LOG_INF("Sending %d bytes", len);
+        printf("Sending %d bytes\n", len);
         err = send(sock, dump, len, 0);
         if (err < len)
         {
-            LOG_ERR("Error sending (%d bytes sent): %d", len, err);
+            printf("Error sending (%d bytes sent): %d\n", len, err);
             close(sock);
             return;
         }
@@ -59,7 +55,7 @@ void testUDPCounter()
 }
 
 
-#define UDP_MESSAGE "Hello there I'm the UDP message 3"
+#define UDP_MESSAGE "Hello there I'm the UDP message 7"
 
 void testUDP()
 {
@@ -67,11 +63,11 @@ void testUDP()
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0)
     {
-        LOG_ERR("Error opening socket: %d", sock);
+        printf("Error opening socket: %d\n", sock);
         return;
     }
 
-    LOG_DBG("Connecting");
+    printf("Connecting\n");
     static struct sockaddr_in remote_addr = {
         sin_family : AF_INET,
     };
@@ -82,21 +78,21 @@ void testUDP()
     err = connect(sock, (struct sockaddr *)&remote_addr, sizeof(remote_addr));
     if (err < 0)
     {
-        LOG_ERR("Unable to connect to backend: %d", err);
+        printf("Unable to connect to backend: %d\n", err);
         close(sock);
         return;
     }
 
-    LOG_DBG("Sending a single message");
+    printf("Sending a single message\n");
     err = send(sock, UDP_MESSAGE, strlen(UDP_MESSAGE), 0);
     if (err < strlen(UDP_MESSAGE))
     {
-        LOG_ERR("Error sending: %d", err);
+        printf("Error sending: %d\n", err);
         close(sock);
         return;
     }
 
-    LOG_DBG("Wait for packet");
+    printf("Wait for packet\n");
 
 #define BUF_LEN 12
     u8_t buffer[BUF_LEN + 1];
@@ -106,12 +102,12 @@ void testUDP()
     err = recv(sock, buffer, BUF_LEN, 0);
     if (err <= 0)
     {
-        LOG_ERR("Error receiving: %d", err);
+        printf("Error receiving: %d\n", err);
         close(sock);
         return;
     }
     buffer[err] = 0;
-    LOG_INF("Received %d bytes (%s)", err, log_strdup(buffer));
+    printf("Received %d bytes (%s)\n", err, log_strdup(buffer));
 
     while (err > 0)
     {
@@ -120,24 +116,24 @@ void testUDP()
         if (err > 0)
         {
             buffer[err] = 0;
-            LOG_INF("Received %d bytes (%s)", err, log_strdup(buffer));
+            printf("Received %d bytes (%s)\n", err, log_strdup(buffer));
         }
         if (err < 0 && err != -EAGAIN) {
-            LOG_ERR("Error receiving: %d", err);
+            printf("Error receiving: %d\n", err);
             close(sock);
             return;
         }
     }
 
-    LOG_DBG("Connected, sending final message...");
+    printf("Connected, sending final message...\n");
     err = send(sock, UDP_MESSAGE, strlen(UDP_MESSAGE), 0);
     if (err < strlen(UDP_MESSAGE))
     {
-        LOG_ERR("Error sending: %d", err);
+        printf("Error sending: %d\n", err);
         close(sock);
         return;
     }
 
     close(sock);
-    LOG_INF("Done socket");
+    printf("Done socket\n");
 }

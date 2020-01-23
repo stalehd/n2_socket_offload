@@ -16,9 +16,6 @@
 
 #include "config.h"
 #include <stdio.h>
-#include <logging/log.h>
-#define LOG_LEVEL APP_LOG_LEVEL
-LOG_MODULE_REGISTER(app);
 
 #include <zephyr.h>
 
@@ -27,7 +24,7 @@ LOG_MODULE_REGISTER(app);
 #include "test_coap.h"
 #include "test_modem.h"
 
-void testNoGodNoPleaseNoNoooooooooFOTA()
+void testFOTA()
 {
     // Initialize the application and run any self-tests before calling fota_init.
     // Otherwise, if initialization or self-tests fail after an update, reboot the system and the previous firmware image will be used.
@@ -35,10 +32,10 @@ void testNoGodNoPleaseNoNoooooooooFOTA()
     int ret = fota_init();
     if (ret)
     {
-        LOG_ERR("fota_init: %d", ret);
+        printf("fota_init: %d\n", ret);
         return;
     }
-    LOG_INF("Returned from fota_init()");
+    printf("Returned from fota_init()\n");
     // Loop forever
     while (true)
     {
@@ -48,9 +45,9 @@ void testNoGodNoPleaseNoNoooooooooFOTA()
 
 void main(void)
 {
-    LOG_DBG("Start");
+    printf("Start\n");
 
     testUDP();
 
-    LOG_DBG("Halting firmware");
+    printf("Halting firmware\n");
 }

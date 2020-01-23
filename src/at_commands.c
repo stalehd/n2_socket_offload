@@ -71,6 +71,12 @@ typedef void (*char_callback_t)(void *ctx, struct buf *rb, char b, bool is_urc, 
 //
 int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callback_t eol_cb)
 {
+    bool printchar = false;
+    if (timeout < 0) {
+        timeout = -timeout;
+        printchar = true;
+        printf("AT+NSORF dump:\n");
+    }
     struct buf rb;
     b_init(&rb);
     uint8_t b, prev = ' ';
@@ -83,6 +89,9 @@ int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callba
             is_urc = true;
         }
         b_add(&rb, b);
+        if (printchar) {
+            printf("%c", b);
+        }
         if (char_cb)
         {
             char_cb(ctx, &rb, b, is_urc, isspace(b));
@@ -91,10 +100,16 @@ int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callba
         {
             if (b_is(&rb, "OK\r\n", 4))
             {
+                if (printchar) {
+                    printf("\nOK AT+NSORF dump\n");
+                }
                 return AT_OK;
             }
             if (b_is(&rb, "ERROR\r\n", 7))
             {
+                if (printchar) {
+                    printf("\nERROR AT+NSORF dump\n");
+                }
                 return AT_ERROR;
             }
         }
@@ -115,7 +130,9 @@ int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callba
 
         prev = b;
     }
-    LOG_WRN("Decode timeout");
+    if (printchar) {
+        printf("\nTIMEOUT AT+NSORF dump\n");
+    }
     return AT_TIMEOUT;
 }
 
@@ -343,7 +360,7 @@ int atnsorf_decode(int *sockfd, char *ip, int *port, uint8_t *data, size_t *rece
         .dataidx = 0,
         .received = received,
     };
-    return decode_input(CMD_TIMEOUT, &ctx, nsorf_char, nsorf_eol);
+    return decode_input(-CMD_TIMEOUT, &ctx, nsorf_char, nsorf_eol);
 }
 
 int atcpsms_decode()

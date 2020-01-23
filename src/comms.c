@@ -1,14 +1,11 @@
 #include "config.h"
-#include <logging/log.h>
-#define LOG_LEVEL LOG_LEVEL_DBG
-LOG_MODULE_REGISTER(comms);
-
 #include <zephyr.h>
 #include <device.h>
 #include <uart.h>
 #include <kernel.h>
 #include <sys/ring_buffer.h>
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include "comms.h"
 #include "at_commands.h"
@@ -128,7 +125,7 @@ static void uart_isr(void *user_data)
         rb = ring_buf_put(&rx_rb, &data, 1);
         if (rb != rx)
         {
-            LOG_ERR("RX buffer is full. Bytes pending: %d, written: %d", rx, rb);
+            printf("RX buffer is full. Bytes pending: %d, written: %d\n", rx, rb);
             return;
         }
         prev = data;
@@ -143,7 +140,7 @@ void modem_write(const char *cmd)
 #endif
     struct device *uart_dev = device_get_binding(UART_NAME);
 	if (!uart_dev) {
-		LOG_ERR("Cannot get UART device");
+		printf("Cannot get UART device\n");
 		return;
 	}
 
@@ -178,7 +175,7 @@ bool modem_is_ready()
     {
         if (len > 1)
         {
-            LOG_INF("Reported IP address is %s", log_strdup(ip));
+            printf("Reported IP address is %s\n", ip);
             return true;
         }
     }
@@ -193,7 +190,6 @@ void modem_restart()
 
 void modem_init(void)
 {
-    LOG_DBG("Modem init");
     k_sem_init(&rx_sem, 0, RB_SIZE);
     ring_buf_init(&rx_rb, RB_SIZE, buffer);
     k_sem_init(&urc_sem, 0, URC_SIZE);
@@ -208,7 +204,7 @@ void modem_init(void)
     struct device *uart_dev = device_get_binding(UART_NAME);
     if (!uart_dev)
     {
-        LOG_ERR("Unable to load UART device");
+        printf("Unable to load UART device\n");
         return;
     }
 
@@ -227,5 +223,4 @@ void modem_init(void)
     uart_irq_callback_user_data_set(uart_dev, uart_isr, uart_dev);
     uart_irq_rx_enable(uart_dev);
 
-    LOG_DBG("UART device loaded.");
 }
