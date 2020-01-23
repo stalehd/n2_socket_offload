@@ -62,4 +62,8 @@ When you reconnect the RTT logger to the device you'll (hopefully) see the firmw
 
 ## What I've learned
 
-The *NMI* part of the `+NSONMI` URC makes the N2 behave... interestingly. If you ignore it you won't be able to read or write sockets until you've sent AT+NSORF to the modem. It will say "OK" whenever you send something but
+The *NMI* part of the `+NSONMI` URC makes the N2 behave... interestingly. If you ignore it you won't be able to read or write sockets until you've sent AT+NSORF to the modem. It will say "OK" whenever you send something but nothing will be sent. It could be the network that times out something somewhere but I don't know. It's weird.
+
+AT+NSORF doesn't like
+* Being called before NSONMI is issued. It will return an undocumented response
+* Being called with length > 512. Anything bigger makes it respond with ERROR even if it could... respond with less. Because that would make sense.

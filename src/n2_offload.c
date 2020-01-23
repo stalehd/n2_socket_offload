@@ -21,6 +21,7 @@
 // The maximum number of sockets in SARA N2 is 7
 #define MDM_MAX_SOCKETS 7
 #define INVALID_FD -1
+#define MAX_RECEIVE 512
 
 struct n2_socket
 {
@@ -34,7 +35,7 @@ struct n2_socket
 };
 
 static struct n2_socket sockets[MDM_MAX_SOCKETS];
-static int next_free_port = 6000;
+static int next_free_port = 5000;
 
 #define CMD_BUFFER_SIZE 64
 static char modem_command_buffer[CMD_BUFFER_SIZE];
@@ -159,8 +160,10 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
 
     // Use NSORF to read incoming data.
     memset(modem_command_buffer, 0, sizeof(modem_command_buffer));
+    if (len > MAX_RECEIVE) {
+        len = MAX_RECEIVE;
+    }
     sprintf(modem_command_buffer, "AT+NSORF=%d,%d\r", sockets[sock_fd].id, len);
-    printf("Sending: %s\n", modem_command_buffer);
     modem_write(modem_command_buffer);
 
     char ip[16];
@@ -172,11 +175,9 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
     int res = atnsorf_decode(&sockfd, ip, &port, buf, &received, &remain);
     if (res == AT_OK)
     {
-        printf("decode data (fd=%d bytes=%d, remain=%d)\n", sock_fd, received, remain);
         if (received == 0)
         {
             k_sem_give(&mdm_sem);
-            printf("Received 0 bytes from nsorf (fd=%d)\n", sock_fd);
             return 0;
         }
         if (fromlen != NULL)
@@ -233,9 +234,6 @@ static int offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
         k_sleep(1000);
         k_sem_take(&mdm_sem, K_FOREVER);
         curcount = sockets[sock_fd].incoming_len;
-        if (curcount > 0) {
-            printf("Got data while waiting. Great success!\n");
-        }
         k_sem_give(&mdm_sem);
     }
     return offload_recvfrom(sock_fd, buf, max_len, flags, NULL, NULL);
@@ -425,18 +423,15 @@ static struct net_if_api api_funcs = {
 
 static void receive_cb(int fd, size_t bytes)
 {
-    printf("Callback for receive: fd=%d, bytes=%d\n", fd, bytes);
     k_sem_take(&mdm_sem, K_FOREVER);
     for (int i = 0; i < MDM_MAX_SOCKETS; i++)
     {
         if (sockets[i].id == fd)
         {
-            printf("Received %d bytes from socket %d\n", bytes, fd);
             sockets[i].incoming_len += bytes;
         }
     }
     k_sem_give(&mdm_sem);
-    printf("Callback for receive completed (fd=%d, bytes=%d)\n", fd, bytes);
 }
 
 // _init initializes the network offloading

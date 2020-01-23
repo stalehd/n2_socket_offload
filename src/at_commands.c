@@ -360,7 +360,7 @@ int atnsorf_decode(int *sockfd, char *ip, int *port, uint8_t *data, size_t *rece
         .dataidx = 0,
         .received = received,
     };
-    return decode_input(-CMD_TIMEOUT, &ctx, nsorf_char, nsorf_eol);
+    return decode_input(CMD_TIMEOUT, &ctx, nsorf_char, nsorf_eol);
 }
 
 int atcpsms_decode()
