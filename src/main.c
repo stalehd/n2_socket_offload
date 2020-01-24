@@ -19,7 +19,7 @@
 
 #include <zephyr.h>
 #include <drivers/gpio.h>
-
+#include <net/socket.h>
 #include "fota.h"
 #include "test_udp.h"
 #include "test_coap.h"
@@ -38,11 +38,54 @@ void testFOTA()
         return;
     }
     printf("Returned from fota_init()\n");
+    #if 0
     // Loop forever
+    char buf[12];
+    int counter = 0;
+
+    int err = 0;
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0)
+    {
+        printf("Error opening socket: %d\n", sock);
+        return;
+    }
+    static struct sockaddr_in remote_addr = {
+                sin_family : AF_INET,
+    };
+    remote_addr.sin_port = htons(1234);
+
+    net_addr_pton(AF_INET, "172.16.15.14", &remote_addr.sin_addr);
+
+    err = connect(sock, (struct sockaddr *)&remote_addr, sizeof(remote_addr));
+    if (err < 0) {
+        printf("Error connecting: %d", err);
+        close(sock);
+        return;
+    }
+    #endif
     while (true)
     {
-        k_sleep(1000);
+        #if 0
+        sprintf(buf, "Keepalive%d", counter);
+        err = send(sock, buf, strlen(buf), 0);
+        if (err < strlen(buf))
+        {
+            printf("Error sending: %d\n", err);
+            close(sock);
+            return;
+        }
+        printf("%d:%s\n", sock, buf);
+        // Send keepalive messages every 5 seconds
+        #endif
+        k_sleep(5000);
+        #if 0
+        counter++;
+        #endif
     }
+    #if 0
+    close(sock);
+    #endif
 }
 
 void main(void)
@@ -52,7 +95,7 @@ void main(void)
 
     printf("Start\n");
 
-    testFOTA();
+    testUDP();
 
     printf("Halting firmware\n");
 }

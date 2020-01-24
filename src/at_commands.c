@@ -222,7 +222,7 @@ int atcgpaddr_decode(char *address, size_t *len)
 
 void nsocr_eol(void *ctx, struct buf *rb, bool is_urc)
 {
-    if (!is_urc && rb->size > 0)
+    if (!is_urc && rb->size > 2)
     {
         int *sockfd = (int *)ctx;
         *sockfd = atoi((const char *)rb->data);

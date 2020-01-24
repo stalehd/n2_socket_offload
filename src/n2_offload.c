@@ -26,6 +26,7 @@
 struct n2_socket
 {
     int id;
+    int in_use;
     bool connected;
     int local_port;
     ssize_t incoming_len;
@@ -34,6 +35,7 @@ struct n2_socket
 };
 
 static struct n2_socket sockets[MDM_MAX_SOCKETS];
+
 static int next_free_port = 6000;
 
 #define CMD_BUFFER_SIZE 64
@@ -42,7 +44,9 @@ static char modem_command_buffer[CMD_BUFFER_SIZE];
 #define CMD_TIMEOUT 2000
 
 #define TO_HEX(i) (i <= 9 ? '0' + i : 'A' - 10 + i)
-#define VALID_SOCKET(s) (sockets[s].id >= 0)
+#define S_TO_I(s) (s - 100)
+#define I_TO_S(i) (i + 100)
+#define VALID_SOCKET(s) (s >= 100 && s <= (100 + MDM_MAX_SOCKETS) && sockets[s-100].in_use)
 
 static struct k_sem mdm_sem;
 
@@ -53,21 +57,24 @@ static void clear_socket(int sock_fd)
 {
     sockets[sock_fd].id = -1;
     sockets[sock_fd].connected = false;
+    sockets[sock_fd].in_use = false;
     sockets[sock_fd].local_port = 0;
     sockets[sock_fd].incoming_len = 0;
     sockets[sock_fd].remote_len = 0;
     if (sockets[sock_fd].remote_addr != NULL)
     {
         k_free(sockets[sock_fd].remote_addr);
+        sockets[sock_fd].remote_addr = NULL;
     }
 }
 
-static int offload_close(int sock_fd)
+static int offload_close(int sfd)
 {
-    if (!VALID_SOCKET(sock_fd))
+    if (!VALID_SOCKET(sfd))
     {
         return -EINVAL;
     }
+    int sock_fd = S_TO_I(sfd);
     k_sem_take(&mdm_sem, K_FOREVER);
     sprintf(modem_command_buffer, "AT+NSOCL=%d\r", sockets[sock_fd].id);
     modem_write(modem_command_buffer);
@@ -82,16 +89,17 @@ static int offload_close(int sock_fd)
     return 0;
 }
 
-static int offload_connect(int sock_fd, const struct sockaddr *addr,
+static int offload_connect(int sfd, const struct sockaddr *addr,
                            socklen_t addrlen)
 {
-    if (!VALID_SOCKET(sock_fd))
+    if (!VALID_SOCKET(sfd))
     {
         return -EINVAL;
     }
+    int sock_fd = S_TO_I(sfd);
     k_sem_take(&mdm_sem, K_FOREVER);
     // Find matching socket, then check if it created on the modem. It shouldn't be created
-    if (sockets[sock_fd].id != 0)
+    if (!sockets[sock_fd].in_use)
     {
         k_sem_give(&mdm_sem);
         return -EISCONN;
@@ -117,7 +125,7 @@ static int offload_poll(struct pollfd *fds, int nfds, int msecs)
             continue;
         }
         fds[i].revents = POLLOUT;
-        if (sockets[fds[i].fd].incoming_len > 0)
+        if (sockets[S_TO_I(fds[i].fd)].incoming_len > 0)
         {
             fds[i].revents |= POLLIN;
         }
@@ -126,16 +134,16 @@ static int offload_poll(struct pollfd *fds, int nfds, int msecs)
     return 0;
 }
 
-static int offload_recvfrom(int sock_fd, void *buf, short int len,
+static int offload_recvfrom(int sfd, void *buf, short int len,
                             short int flags, struct sockaddr *from,
                             socklen_t *fromlen)
 {
     ARG_UNUSED(flags);
-    if (!VALID_SOCKET(sock_fd))
+    if (!VALID_SOCKET(sfd))
     {
         return -EINVAL;
     }
-
+    int sock_fd = S_TO_I(sfd);
     k_sem_take(&mdm_sem, K_FOREVER);
 
     // Now here's an interesting bit of information: If you send AT+NSORF *before*
@@ -191,14 +199,15 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
     return -ENOMEM;
 }
 
-static int offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
+static int offload_recv(int sfd, void *buf, size_t max_len, int flags)
 {
     ARG_UNUSED(flags);
 
-    if (!VALID_SOCKET(sock_fd))
+    if (!VALID_SOCKET(sfd))
     {
         return -EINVAL;
     }
+    int sock_fd = S_TO_I(sfd);
     k_sem_take(&mdm_sem, K_FOREVER);
     if (!sockets[sock_fd].connected)
     {
@@ -224,14 +233,14 @@ static int offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
         curcount = sockets[sock_fd].incoming_len;
         k_sem_give(&mdm_sem);
     }
-    return offload_recvfrom(sock_fd, buf, max_len, flags, NULL, NULL);
+    return offload_recvfrom(sfd, buf, max_len, flags, NULL, NULL);
 }
 
-static int offload_sendto(int sock_fd, const void *buf, size_t len,
+static int offload_sendto(int sfd, const void *buf, size_t len,
                           int flags, const struct sockaddr *to,
                           socklen_t tolen)
 {
-    if (!VALID_SOCKET(sock_fd))
+    if (!VALID_SOCKET(sfd))
     {
         return -EINVAL;
     }
@@ -240,7 +249,7 @@ static int offload_sendto(int sock_fd, const void *buf, size_t len,
     {
         return -EINVAL;
     }
-
+    int sock_fd = S_TO_I(sfd);
     k_sem_take(&mdm_sem, K_FOREVER);
 
     struct sockaddr_in *toaddr = (struct sockaddr_in *)to;
@@ -291,12 +300,13 @@ static int offload_sendto(int sock_fd, const void *buf, size_t len,
     return written;
 }
 
-static int offload_send(int sock_fd, const void *buf, size_t len, int flags)
+static int offload_send(int sfd, const void *buf, size_t len, int flags)
 {
-    if (!VALID_SOCKET(sock_fd))
+    if (!VALID_SOCKET(sfd))
     {
         return -EINVAL;
     }
+    int sock_fd = S_TO_I(sfd);
     k_sem_take(&mdm_sem, K_FOREVER);
 
     if (!sockets[sock_fd].connected)
@@ -305,7 +315,7 @@ static int offload_send(int sock_fd, const void *buf, size_t len, int flags)
         return -ENOTCONN;
     }
     k_sem_give(&mdm_sem);
-    int ret = offload_sendto(sock_fd, buf, len, flags,
+    int ret = offload_sendto(sfd, buf, len, flags,
                              sockets[sock_fd].remote_addr, sockets[sock_fd].remote_len);
     return ret;
 }
@@ -327,18 +337,20 @@ static int offload_socket(int family, int type, int proto)
 
     k_sem_take(&mdm_sem, K_FOREVER);
     int fd = INVALID_FD;
-    for (uint8_t i = 0; i < MDM_MAX_SOCKETS; i++) {
-        if (sockets[i].id == INVALID_FD) {
+    for (int i = 0; i < MDM_MAX_SOCKETS; i++) {
+        if (!sockets[i].in_use) {
+            printf("Found free fd = %d\n", i);
             fd = i;
             break;
         }
     }
+    printf("Next free fd: %d\n", fd);
     if (fd == INVALID_FD) {
+        printf("Is invalid\n");
+        k_sem_give(&mdm_sem);
         return -ENOMEM;
     }
     sockets[fd].local_port = next_free_port;
-    next_free_port++;
-
     sprintf(modem_command_buffer, "AT+NSOCR=\"DGRAM\",17,%d,1\r", sockets[fd].local_port);
     modem_write(modem_command_buffer);
 
@@ -346,9 +358,13 @@ static int offload_socket(int family, int type, int proto)
     if (atnsocr_decode(&sockfd) == AT_OK)
     {
         sockets[fd].id = sockfd;
+        sockets[fd].in_use = true;
+        next_free_port++;
         k_sem_give(&mdm_sem);
-        return fd;
+        printf("socket(): New internal fd=%d mdm fd=%d\n", fd, sockfd);
+        return I_TO_S(fd);
     }
+    printf("It said not ok\n");
     k_sem_give(&mdm_sem);
     return -ENOMEM;
 }
@@ -400,6 +416,7 @@ static struct net_if_api api_funcs = {
 
 static void receive_cb(int fd, size_t bytes)
 {
+    printf("%d bytes on fd %d\n", bytes, fd);
     k_sem_take(&mdm_sem, K_FOREVER);
     for (int i = 0; i < MDM_MAX_SOCKETS; i++)
     {
@@ -456,9 +473,9 @@ static int n2_init(struct device *dev)
         printf("IMSI for modem is %s\n", log_strdup(imsi));
     }
     printf("Modem is ready.\n");
-/*
-    printf("Turning off PSM\n");
-    modem_write("AT+CPSMS=0\r");
+
+/*    printf("Turning off PSM\n");
+    modem_write("AT+CPSMS=1,,,\"11100000\",\"11100000\"\r");
     if (atcpsms_decode() != AT_OK)
     {
         printf("Unable to turn off PSM for modem\n");

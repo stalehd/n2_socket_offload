@@ -15,6 +15,6 @@
 
 // This is the version of the firmware. This must match the versions set on the
 // images uploaded via the Horde API (at https://api.nbiot.engineering/)
-#define CLIENT_FIRMWARE_VER "1.1.0"
+#define CLIENT_FIRMWARE_VER "1.2.0"
 
 int fota_init();

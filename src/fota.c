@@ -251,7 +251,7 @@ static char endpoint_name[20];
 
 static int init_endpoint_name()
 {
-	strcpy(endpoint_name, "nrf-1");
+	strcpy(endpoint_name, "nrf52");
 	return 0;
 }
 
