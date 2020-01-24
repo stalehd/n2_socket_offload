@@ -27,7 +27,6 @@ struct n2_socket
 {
     int id;
     bool connected;
-    //    struct sockaddr *addr;
     int local_port;
     ssize_t incoming_len;
     void *remote_addr;
@@ -35,7 +34,7 @@ struct n2_socket
 };
 
 static struct n2_socket sockets[MDM_MAX_SOCKETS];
-static int next_free_port = 5000;
+static int next_free_port = 6000;
 
 #define CMD_BUFFER_SIZE 64
 static char modem_command_buffer[CMD_BUFFER_SIZE];
@@ -107,11 +106,6 @@ static int offload_connect(int sock_fd, const struct sockaddr *addr,
 
 static int offload_poll(struct pollfd *fds, int nfds, int msecs)
 {
-    if (nfds != 1)
-    {
-        printf("poll has invalid nfds: %d\n", nfds);
-        return -EINVAL;
-    }
     // A small breather to make sure poll() doesn't hog the CPU
     k_sleep(100);
     k_sem_take(&mdm_sem, K_FOREVER);
@@ -139,7 +133,6 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
     ARG_UNUSED(flags);
     if (!VALID_SOCKET(sock_fd))
     {
-        printf("Invalid socket fd: %d\n", sock_fd);
         return -EINVAL;
     }
 
@@ -153,7 +146,6 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
     if (sockets[sock_fd].incoming_len == 0)
     {
         k_sem_give(&mdm_sem);
-        printf("Socket %d has no data waiting, returning 0/EWOULDBLOCK\n", sock_fd);
         errno = EWOULDBLOCK;
         return 0;
     }
@@ -192,11 +184,9 @@ static int offload_recvfrom(int sock_fd, void *buf, short int len,
         }
         sockets[sock_fd].incoming_len = remain;
         k_sem_give(&mdm_sem);
-        printf("recv() got %d bytes from fd=%d (%d remaining)\n", received, sock_fd, remain);
         return received;
     }
     k_sem_give(&mdm_sem);
-    printf("recvfrom(): Got %d when decoding NSORF for %d\n", res, sock_fd);
     errno = -ENOMEM;
     return -ENOMEM;
 }
@@ -207,14 +197,12 @@ static int offload_recv(int sock_fd, void *buf, size_t max_len, int flags)
 
     if (!VALID_SOCKET(sock_fd))
     {
-        printf("Invalid socket fd: %d\n", sock_fd);
         return -EINVAL;
     }
     k_sem_take(&mdm_sem, K_FOREVER);
     if (!sockets[sock_fd].connected)
     {
         k_sem_give(&mdm_sem);
-        printf("Socket isn't connected (fd=%d)\n", sock_fd);
         return -EINVAL;
     }
 
@@ -245,13 +233,11 @@ static int offload_sendto(int sock_fd, const void *buf, size_t len,
 {
     if (!VALID_SOCKET(sock_fd))
     {
-        printf("Invalid socket fd: %d\n", sock_fd);
         return -EINVAL;
     }
 
     if (len > CONFIG_N2_MAX_PACKET_SIZE)
     {
-        printf("Too long packet (%d). Can't sendto()\n", len);
         return -EINVAL;
     }
 
@@ -262,7 +248,6 @@ static int offload_sendto(int sock_fd, const void *buf, size_t len,
     char addr[64];
     if (!inet_ntop(AF_INET, &toaddr->sin_addr, addr, 128))
     {
-        printf("Unable to convert address to string\n");
         // couldn't read address. Bail out
         k_sem_give(&mdm_sem);
         return -EINVAL;
@@ -293,14 +278,11 @@ static int offload_sendto(int sock_fd, const void *buf, size_t len,
     switch (atnsost_decode(&fd, &sent))
     {
     case AT_OK:
-        printf("Sucessfully sent %d bytes on fd=%d\n", sent, fd);
         break;
     case AT_ERROR:
-        printf("ERROR response from NSOST\n");
         written = -ENOMEM;
         break;
     case AT_TIMEOUT:
-        printf("Timeout reading response from AT+NSOST\n");
         written = -ENOMEM;
         break;
     }
@@ -313,14 +295,12 @@ static int offload_send(int sock_fd, const void *buf, size_t len, int flags)
 {
     if (!VALID_SOCKET(sock_fd))
     {
-        printf("Invalid socket fd: %d\n", sock_fd);
         return -EINVAL;
     }
     k_sem_take(&mdm_sem, K_FOREVER);
 
     if (!sockets[sock_fd].connected)
     {
-        printf("Socket not connected: (%d)\n", sock_fd);
         k_sem_give(&mdm_sem);
         return -ENOTCONN;
     }
@@ -354,7 +334,6 @@ static int offload_socket(int family, int type, int proto)
         }
     }
     if (fd == INVALID_FD) {
-        printf("socket(): No free sockets\n");
         return -ENOMEM;
     }
     sockets[fd].local_port = next_free_port;
@@ -367,11 +346,9 @@ static int offload_socket(int family, int type, int proto)
     if (atnsocr_decode(&sockfd) == AT_OK)
     {
         sockets[fd].id = sockfd;
-        printf("socket(): created fd = %d, modem fd = %d, local port = %d\n", fd, sockets[fd].id, sockets[fd].local_port);
         k_sem_give(&mdm_sem);
         return fd;
     }
-    printf("Unable to decode NSOCR\n");
     k_sem_give(&mdm_sem);
     return -ENOMEM;
 }
@@ -460,7 +437,7 @@ static int n2_init(struct device *dev)
     modem_write("AT+NSOCL=6\r");
     at_decode();
 
-    //modem_restart();
+    modem_restart();
 
 
     printf("Waiting for modem to connect...\n");
@@ -478,12 +455,14 @@ static int n2_init(struct device *dev)
     {
         printf("IMSI for modem is %s\n", log_strdup(imsi));
     }
-    printf("Modem is ready. Turning off PSM\n");
+    printf("Modem is ready.\n");
+/*
+    printf("Turning off PSM\n");
     modem_write("AT+CPSMS=0\r");
     if (atcpsms_decode() != AT_OK)
     {
         printf("Unable to turn off PSM for modem\n");
-    }
+    }*/
     return 0;
 }
 

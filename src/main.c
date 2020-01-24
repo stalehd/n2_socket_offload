@@ -18,11 +18,13 @@
 #include <stdio.h>
 
 #include <zephyr.h>
+#include <drivers/gpio.h>
 
 #include "fota.h"
 #include "test_udp.h"
 #include "test_coap.h"
 #include "test_modem.h"
+#include "panic.h"
 
 void testFOTA()
 {
@@ -45,9 +47,12 @@ void testFOTA()
 
 void main(void)
 {
+
+    //init_panic();
+
     printf("Start\n");
 
-    testUDP();
+    testFOTA();
 
     printf("Halting firmware\n");
 }

@@ -55,7 +55,7 @@ void testUDPCounter()
 }
 
 
-#define UDP_MESSAGE "Hello there I'm the UDP message 9"
+#define UDP_MESSAGE "Hello there I'm the UDP message C"
 
 void testUDP()
 {
