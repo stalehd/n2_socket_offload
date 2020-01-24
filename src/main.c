@@ -38,8 +38,14 @@ void testFOTA()
         return;
     }
     printf("Returned from fota_init()\n");
-    #if 0
     // Loop forever
+    #if 1
+     while (true)
+    {
+        k_sleep(5000);
+    }
+    #else
+
     char buf[12];
     int counter = 0;
 
@@ -63,10 +69,8 @@ void testFOTA()
         close(sock);
         return;
     }
-    #endif
     while (true)
     {
-        #if 0
         sprintf(buf, "Keepalive%d", counter);
         err = send(sock, buf, strlen(buf), 0);
         if (err < strlen(buf))
@@ -77,13 +81,9 @@ void testFOTA()
         }
         printf("%d:%s\n", sock, buf);
         // Send keepalive messages every 5 seconds
-        #endif
         k_sleep(5000);
-        #if 0
         counter++;
-        #endif
     }
-    #if 0
     close(sock);
     #endif
 }
@@ -95,7 +95,7 @@ void main(void)
 
     printf("Start\n");
 
-    testUDP();
+    testFOTA();
 
     printf("Halting firmware\n");
 }
