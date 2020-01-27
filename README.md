@@ -25,6 +25,8 @@ MCUBoot to be installed.
 
 `imgtool keygen -k n2_fota.pem -t rsa-2048`
 
+There's a key included in this repo but for obvious reasons I recommend not
+using it for anything but testing.
 
 ### Build MCUBoot
 
