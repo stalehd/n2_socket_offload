@@ -32,8 +32,8 @@ void testModem()
         LOG_ERR("Unable to decode nsocr");
         return;
     }
-    modem_write("AT\r");
-    at_decode();
+    modem_write("ATI\r");
+    atnsocl_decode();
 
     modem_write("AT+NSOST=0,\"172.16.15.14\",1234,6,\"AABBAAAABBAA\"\r");
     int fd = -1;

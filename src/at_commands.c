@@ -13,8 +13,9 @@ LOG_MODULE_REGISTER(at_commands);
 #define CMD_TIMEOUT K_MSEC(2000)
 #define CMD_REBOOT_TIMEOUT K_MSEC(15000)
 
-// Ring buffer size. The ring buffer holds just enough bytes to detect the
-// different responses/fields.
+/* this is a helper buffer to keep track of the input from the UART. The buffer
+   is quite short and can't keep track of longer strings. It is mainly concerned
+   with catching +NSONMI URCs from the modem */
 #define B_SIZE 10
 
 struct buf
@@ -28,7 +29,6 @@ void b_reset(struct buf *rb)
 {
     rb->index = 0;
     rb->size = 0;
-    // this can be skipped
     memset(rb->data, 0, B_SIZE);
 }
 
@@ -61,21 +61,22 @@ bool b_is_urc(struct buf *rb)
 
 // Callbacks for the input processing. The context is used to maintain variables
 // between the invocations and are passed by the decode_input function below.
+
+// The end of line callback - called every time an end-of-line character is found
 typedef void (*eol_callback_t)(void *ctx, struct buf *rb, bool is_urc);
+
+// Character callback - called for every character in the input. Both the character callback
+// and the EOL callback is called when the processing reaches an end of line character
 typedef void (*char_callback_t)(void *ctx, struct buf *rb, char b, bool is_urc, bool is_space);
 
 // Each decoder is largely the same so we use a strategy pattern for each. The char
 // callback is called for each character input and the EOL callback is called when a
 // new line is found. The buffer will contain the *first* 9 characters of the line
 // so it might be truncated.
-//
 int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callback_t eol_cb)
 {
-    bool printchar = false;
     if (timeout < 0) {
         timeout = -timeout;
-        printchar = true;
-        printf("AT+NSORF dump:\n");
     }
     struct buf rb;
     b_init(&rb);
@@ -89,9 +90,6 @@ int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callba
             is_urc = true;
         }
         b_add(&rb, b);
-        if (printchar) {
-            printf("%c", b);
-        }
         if (char_cb)
         {
             char_cb(ctx, &rb, b, is_urc, isspace(b));
@@ -100,16 +98,10 @@ int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callba
         {
             if (b_is(&rb, "OK\r\n", 4))
             {
-                if (printchar) {
-                    printf("\nOK AT+NSORF dump\n");
-                }
                 return AT_OK;
             }
             if (b_is(&rb, "ERROR\r\n", 7))
             {
-                if (printchar) {
-                    printf("\nERROR AT+NSORF dump\n");
-                }
                 return AT_ERROR;
             }
         }
@@ -130,21 +122,24 @@ int decode_input(int32_t timeout, void *ctx, char_callback_t char_cb, eol_callba
 
         prev = b;
     }
-    if (printchar) {
-        printf("\nTIMEOUT AT+NSORF dump\n");
-    }
     return AT_TIMEOUT;
 }
 
+// Decode AT+NRB responses. It just waits for OK or ERROR with a slightly
+// longer timeout than the default commands.
 int atnrb_decode()
 {
     return decode_input(CMD_REBOOT_TIMEOUT, NULL, NULL, NULL);
 }
 
-// Just wait for OK or ERROR
+// AT responses - wait for OK (ERROR is quite rare here but it is handled)
+#define at_decode() decode_input(CMD_TIMEOUT, NULL, NULL, NULL)
+
+// Decode response for AT+NSOCL (close socket). There is no return from this
+// command, just OK or ERROR.
 int atnsocl_decode()
 {
-    return decode_input(CMD_TIMEOUT, NULL, NULL, NULL);
+    return at_decode();
 }
 
 // Decode the CGPADDR response. The in_address flag says if we're in the address
@@ -363,21 +358,14 @@ int atnsorf_decode(int *sockfd, char *ip, int *port, uint8_t *data, size_t *rece
     return decode_input(CMD_TIMEOUT, &ctx, nsorf_char, nsorf_eol);
 }
 
+// Decode AT+CPSMS responses. This just waits for ERROR or OK
 int atcpsms_decode()
 {
-    return decode_input(CMD_TIMEOUT, NULL, NULL, NULL);
+    return at_decode();
 }
 
-int at_decode()
-{
-    return decode_input(CMD_TIMEOUT, NULL, NULL, NULL);
-}
 
-int at_poll(int32_t timeout)
-{
-    return decode_input(CMD_TIMEOUT, NULL, NULL, NULL);
-}
-
+// Decode AT+CIMI responses.
 struct cimi_ctx
 {
     char *imsi;

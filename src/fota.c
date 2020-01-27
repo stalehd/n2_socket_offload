@@ -36,7 +36,6 @@ static int firmware_update_cb(u16_t obj_inst_id)
 	// Wait a few seconds before rebooting so that the lwm2m client has a chance
 	// to acknowledge having received the Update signal.
 	k_delayed_work_submit(&reboot_work, K_SECONDS(10));
-
 	return 0;
 }
 
@@ -225,33 +224,22 @@ static int init_lwm2m_resources()
 
 static int init_image()
 {
-	// If we are updating but have booted into a confirmed image, it means
-	// the test reboot failed and we have reverted to the old image.
-	// TODO: Do a different check when updating modem firmware.
-	if (boot_is_img_confirmed())
+	// This might need some additional checks. If the update has failed
+	// we'll be booting into an confirmed image but this might also be for
+	// other reasons. Store the current state somewhere in flash before making
+	// assumptions on the state. For now we'll just confirm the image.
+	if (!boot_is_img_confirmed())
 	{
-		LOG_ERR("Firmware update failed");
-		lwm2m_engine_set_u8("5/0/5", RESULT_UPDATE_FAILED);
-		return 0;
+		int ret = boot_write_img_confirmed();
+		if (ret)
+		{
+			LOG_ERR("confirm image: %d", ret);
+			return ret;
+		}
+		LOG_INF("Firmware update succeeded");
+		lwm2m_engine_set_u8("5/0/5", RESULT_SUCCESS);
 	}
 
-	LOG_INF("Firmware update succeeded");
-	lwm2m_engine_set_u8("5/0/5", RESULT_SUCCESS);
-
-	int ret = boot_write_img_confirmed();
-	if (ret)
-	{
-		LOG_ERR("confirm image: %d", ret);
-		return ret;
-	}
-	return 0;
-}
-
-static char endpoint_name[20];
-
-static int init_endpoint_name()
-{
-	strcpy(endpoint_name, "nrf52");
 	return 0;
 }
 
@@ -271,14 +259,8 @@ int fota_init()
 		return ret;
 	}
 
-	ret = init_endpoint_name();
-	if (ret)
-	{
-		return ret;
-	}
-
 	static struct lwm2m_ctx client;
-	lwm2m_rd_client_start(&client, endpoint_name, NULL);
+	lwm2m_rd_client_start(&client, "ee02", NULL);
 
 	return 0;
 }

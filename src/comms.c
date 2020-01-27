@@ -217,4 +217,23 @@ void modem_init(void)
     uart_irq_callback_user_data_set(uart_dev, uart_isr, uart_dev);
     uart_irq_rx_enable(uart_dev);
 
+    // Set up the modem. Might also include AT+CGPADDR to set up PDP context
+    // here.
+    modem_restart();
+
+    LOG_INF("Waiting for modem to connect...");
+    while (!modem_is_ready())
+    {
+        k_sleep(K_MSEC(2000));
+    }
+    modem_write("AT+CIMI\r");
+    char imsi[24];
+    if (atcimi_decode((char *)&imsi) != AT_OK)
+    {
+        LOG_ERR("Unable to retrieve IMSI from modem");
+    }
+    else
+    {
+        LOG_INF("IMSI for modem is %s", log_strdup(imsi));
+    }
 }

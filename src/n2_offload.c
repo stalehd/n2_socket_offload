@@ -439,51 +439,10 @@ static int n2_init(struct device *dev)
     receive_callback(receive_cb);
 
     modem_init();
-
-    modem_write("AT+NSOCL=0\r");
-    at_decode();
-    modem_write("AT+NSOCL=1\r");
-    at_decode();
-    modem_write("AT+NSOCL=2\r");
-    at_decode();
-    modem_write("AT+NSOCL=3\r");
-    at_decode();
-    modem_write("AT+NSOCL=4\r");
-    at_decode();
-    modem_write("AT+NSOCL=5\r");
-    at_decode();
-    modem_write("AT+NSOCL=6\r");
-    at_decode();
-
-    modem_restart();
-
-
-    LOG_INF("Waiting for modem to connect...");
-    while (!modem_is_ready())
-    {
-        k_sleep(K_MSEC(2000));
-    }
-    modem_write("AT+CIMI\r");
-    char imsi[24];
-    if (atcimi_decode((char *)&imsi) != AT_OK)
-    {
-        LOG_ERR("Unable to retrieve IMSI from modem");
-    }
-    else
-    {
-        LOG_INF("IMSI for modem is %s", log_strdup(imsi));
-    }
-
     return 0;
 }
 
-struct n2_iface_ctx
-{
-};
-
-static struct n2_iface_ctx n2_ctx;
-
 NET_DEVICE_OFFLOAD_INIT(sara_n2, CONFIG_N2_NAME,
-                        n2_init, &n2_ctx, NULL,
+                        n2_init, NULL, NULL,
                         CONFIG_N2_INIT_PRIORITY, &api_funcs,
                         CONFIG_N2_MAX_PACKET_SIZE);

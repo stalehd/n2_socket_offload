@@ -31,6 +31,12 @@ void modem_write(const char *cmd);
  */
 bool modem_read(uint8_t *b, int32_t timeout);
 
+/**
+ * @brief check if modem is ready and online (ie check if there's an assigned IP address)
+ */
 bool modem_is_ready();
 
+/**
+ * Restart modem
+ */
 void modem_restart();
