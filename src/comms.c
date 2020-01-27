@@ -1,4 +1,10 @@
 #include "config.h"
+
+#define LOG_LEVEL LOG_LEVEL_INF
+#include <logging/log.h>
+LOG_MODULE_REGISTER(n2_comms);
+
+
 #include <zephyr.h>
 #include <device.h>
 #include <uart.h>
@@ -126,7 +132,7 @@ static void uart_isr(void *user_data)
         rb = ring_buf_put(&rx_rb, &data, 1);
         if (rb != rx)
         {
-            printf("RX buffer is full. Bytes pending: %d, written: %d\n", rx, rb);
+            LOG_ERR("RX buffer is full. Bytes pending: %d, written: %d", rx, rb);
             return;
         }
         prev = data;
@@ -141,7 +147,7 @@ void modem_write(const char *cmd)
 #endif
     struct device *uart_dev = device_get_binding(UART_NAME);
 	if (!uart_dev) {
-		printf("Cannot get UART device\n");
+		LOG_ERR("Cannot get UART device");
 		return;
 	}
 
@@ -176,7 +182,6 @@ bool modem_is_ready()
     {
         if (len > 1)
         {
-            printf("Reported IP address is %s\n", ip);
             return true;
         }
     }
@@ -205,21 +210,9 @@ void modem_init(void)
     struct device *uart_dev = device_get_binding(UART_NAME);
     if (!uart_dev)
     {
-        printf("Unable to load UART device\n");
+        LOG_ERR("Unable to load UART device\n");
         return;
     }
-
-    /*
-    struct uart_config cfg;
-    int rc = uart_config_get(uart_dev, &cfg);
-    if (rc == 0)
-    {
-        LOG_INF("UART config      baud: %d", cfg.baudrate);
-        LOG_INF("            data bits: %d", cfg.data_bits);
-        LOG_INF("            flow_ctrl: %d", cfg.flow_ctrl);
-        LOG_INF("               parity: %d", cfg.parity);
-        LOG_INF("            stop_bits: %d", cfg.stop_bits);
-    }*/
 
     uart_irq_callback_user_data_set(uart_dev, uart_isr, uart_dev);
     uart_irq_rx_enable(uart_dev);

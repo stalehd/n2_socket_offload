@@ -57,13 +57,30 @@ west sign -t imgtool -- --key [signing key].pem
 west flash --hex-file build/zephyr/zephyr.signed.hex
 ```
 
-When you reconnect the RTT logger to the device you'll (hopefully) see the firmware boot normally.
+When you reconnect the RTT logger to the device yougi'll (hopefully) see the firmware boot normally.
 
+### Upload image to Horde
+
+```bash
+$ make
+$ curl -XPOST  -HX-API-Token:{token} https://api.nbiot.engineering/collections/{cid}/firmware -F $ image=@build/zephyr/zephyr.signed.bin
+$ curl -XPATCH -d'{"version":"{version}"}'  -HX-API-Token:{token} https://api.nbiot.engineering/collections/{cid}/firmware/{fid}
+```
+
+Set the new version on the device with PATCH:
+
+`curl -XPATCH -d'{"firmware":{"targetFirmwareId": "{fid}"}}'  -HX-API-Token:{token} https://api.nbiot.engineering/collections/{cid}/devices/{did}`
+
+This will update the device the next time it checks in.
 
 ## What I've learned
 
 The *NMI* part of the `+NSONMI` URC makes the N2 behave... interestingly. If you ignore it you won't be able to read or write sockets until you've sent AT+NSORF to the modem. It will say "OK" whenever you send something but nothing will be sent. It could be the network that times out something somewhere but I don't know. It's weird.
 
-AT+NSORF doesn't like
+AT+NSORF doesn't like:
+
 * Being called before NSONMI is issued. It will return an undocumented response
 * Being called with length > 512. Anything bigger makes it respond with ERROR even if it could... respond with less. Because that would make sense.
+
+CoAP options in Zephyr is by default 12 bytes. Anything longer will say "unexpected endpoint data received" and some kind of -EINVAL return value. The value isn't *unexpected* or *invalid* but the default option size is too small to accomodate the response. It *is* logged but not by the CoAP logger. It's logged by the NETWORK logger. Great.
+

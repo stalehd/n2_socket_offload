@@ -10,7 +10,7 @@
 #include "fota.h"
 
 
-LOG_MODULE_REGISTER(fota, CONFIG_LOG_DEFAULT_LEVEL);
+LOG_MODULE_REGISTER(fota, LOG_LEVEL_DBG);
 
 #define FLASH_AREA_IMAGE_SECONDARY DT_FLASH_AREA_IMAGE_1_ID
 #define FLASH_BANK1_ID DT_FLASH_AREA_IMAGE_1_ID
@@ -97,7 +97,7 @@ static int firmware_block_received_cb(u16_t obj_inst_id, u16_t res_id, u16_t res
 	}
 
 	bytes_downloaded += data_len;
-
+	LOG_DBG("%d of %d bytes downloaded", bytes_downloaded, total_size);
 	/* display a % downloaded, if it's different */
 	if (total_size)
 	{

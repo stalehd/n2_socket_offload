@@ -3,6 +3,11 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+
+#define LOG_LEVEL LOG_LEVEL_INF
+#include <logging/log.h>
+LOG_MODULE_REGISTER(n2_offload);
+
 #include <stdio.h>
 #include <stdbool.h>
 #include <zephyr/types.h>
@@ -346,7 +351,6 @@ static int offload_socket(int family, int type, int proto)
         }
     }
     if (fd == INVALID_FD) {
-        printf("Is invalid\n");
         k_sem_give(&mdm_sem);
         return -ENOMEM;
     }
@@ -361,7 +365,6 @@ static int offload_socket(int family, int type, int proto)
         sockets[fd].in_use = true;
         next_free_port++;
         k_sem_give(&mdm_sem);
-        printf("socket(): New internal fd=%d mdm fd=%d, port=%d\n", fd, sockfd, sockets[fd].local_port);
         return I_TO_S(fd);
     }
     k_sem_give(&mdm_sem);
@@ -415,7 +418,6 @@ static struct net_if_api api_funcs = {
 
 static void receive_cb(int fd, size_t bytes)
 {
-    printf("%d bytes on fd %d\n", bytes, fd);
     k_sem_take(&mdm_sem, K_FOREVER);
     for (int i = 0; i < MDM_MAX_SOCKETS; i++)
     {
@@ -456,7 +458,7 @@ static int n2_init(struct device *dev)
     modem_restart();
 
 
-    printf("Waiting for modem to connect...\n");
+    LOG_INF("Waiting for modem to connect...");
     while (!modem_is_ready())
     {
         k_sleep(K_MSEC(2000));
@@ -465,20 +467,13 @@ static int n2_init(struct device *dev)
     char imsi[24];
     if (atcimi_decode((char *)&imsi) != AT_OK)
     {
-        printf("Unable to retrieve IMSI from modem\n");
+        LOG_ERR("Unable to retrieve IMSI from modem");
     }
     else
     {
-        printf("IMSI for modem is %s\n", log_strdup(imsi));
+        LOG_INF("IMSI for modem is %s", log_strdup(imsi));
     }
-    printf("Modem is ready.\n");
 
-/*    printf("Turning off PSM\n");
-    modem_write("AT+CPSMS=1,,,\"11100000\",\"11100000\"\r");
-    if (atcpsms_decode() != AT_OK)
-    {
-        printf("Unable to turn off PSM for modem\n");
-    }*/
     return 0;
 }
 

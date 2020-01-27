@@ -11,10 +11,10 @@
 // This is the serial number reported by the LwM2M client. If you have some
 // kind of serial number available you can use that, otherwise the IMEI (the
 // ID for the cellular modem) or IMSI (The ID of the SIM in use)
-#define CLIENT_SERIAL_NUMBER "1"
+#define CLIENT_SERIAL_NUMBER "FINAL"
 
 // This is the version of the firmware. This must match the versions set on the
 // images uploaded via the Horde API (at https://api.nbiot.engineering/)
-#define CLIENT_FIRMWARE_VER "1.2.0"
+#define CLIENT_FIRMWARE_VER "2.0.0"
 
 int fota_init();
