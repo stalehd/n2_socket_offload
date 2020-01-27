@@ -114,8 +114,10 @@ static int offload_connect(int sfd, const struct sockaddr *addr,
 
 static int offload_poll(struct pollfd *fds, int nfds, int msecs)
 {
-    // A small breather to make sure poll() doesn't hog the CPU
-    k_sleep(100);
+    // Not *quite* how it should behave but close enough.
+    if (msecs > 0) {
+        k_sleep(msecs);
+    }
     k_sem_take(&mdm_sem, K_FOREVER);
     for (int i = 0; i < nfds; i++)
     {
@@ -339,12 +341,10 @@ static int offload_socket(int family, int type, int proto)
     int fd = INVALID_FD;
     for (int i = 0; i < MDM_MAX_SOCKETS; i++) {
         if (!sockets[i].in_use) {
-            printf("Found free fd = %d\n", i);
             fd = i;
             break;
         }
     }
-    printf("Next free fd: %d\n", fd);
     if (fd == INVALID_FD) {
         printf("Is invalid\n");
         k_sem_give(&mdm_sem);
@@ -361,10 +361,9 @@ static int offload_socket(int family, int type, int proto)
         sockets[fd].in_use = true;
         next_free_port++;
         k_sem_give(&mdm_sem);
-        printf("socket(): New internal fd=%d mdm fd=%d\n", fd, sockfd);
+        printf("socket(): New internal fd=%d mdm fd=%d, port=%d\n", fd, sockfd, sockets[fd].local_port);
         return I_TO_S(fd);
     }
-    printf("It said not ok\n");
     k_sem_give(&mdm_sem);
     return -ENOMEM;
 }

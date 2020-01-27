@@ -95,7 +95,7 @@ void main(void)
 
     printf("Start\n");
 
-    testFOTA();
+    testUDP();
 
     printf("Halting firmware\n");
 }

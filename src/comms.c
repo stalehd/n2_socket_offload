@@ -69,7 +69,8 @@ void urc_threadproc(void)
                                 buf[i] = 0;
                             }
                         }
-                        recv_cb(atoi(fdptr), atoi(countptr));
+                        // Note offset -- this is the "+NSONMI: " prefix
+                        recv_cb(atoi(fdptr + 9), atoi(countptr));
                     }
                 }
                 index = 0;

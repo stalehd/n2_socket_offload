@@ -4,6 +4,8 @@
 #include <net/socket.h>
 #include "test_udp.h"
 
+#define MDM_MAX_SOCKETS 7
+
 void testUDPCounter()
 {
     printf("Counting bytes\n");
@@ -55,85 +57,93 @@ void testUDPCounter()
 }
 
 
-#define UDP_MESSAGE "Hello there I'm the UDP message C"
+static char udp_message[64];
+static int sockets[MDM_MAX_SOCKETS];
+
+void close_sockets() {
+    for (int i = 0; i < MDM_MAX_SOCKETS; i++) {
+        close(sockets[i]);
+    }
+}
 
 void testUDP()
 {
     int err = 0;
-    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock < 0)
-    {
-        printf("Error opening socket: %d\n", sock);
-        return;
-    }
-
-    printf("Connecting\n");
-    static struct sockaddr_in remote_addr = {
-        sin_family : AF_INET,
-    };
-    remote_addr.sin_port = htons(1234);
-
-    net_addr_pton(AF_INET, "172.16.15.14", &remote_addr.sin_addr);
-
-    err = connect(sock, (struct sockaddr *)&remote_addr, sizeof(remote_addr));
-    if (err < 0)
-    {
-        printf("Unable to connect to backend: %d\n", err);
-        close(sock);
-        return;
-    }
-
-    printf("Sending a single message\n");
-    err = send(sock, UDP_MESSAGE, strlen(UDP_MESSAGE), 0);
-    if (err < strlen(UDP_MESSAGE))
-    {
-        printf("Error sending: %d\n", err);
-        close(sock);
-        return;
-    }
-
-    printf("Wait for packet\n");
-
-#define BUF_LEN 12
-    u8_t buffer[BUF_LEN + 1];
-    memset(buffer, 0, BUF_LEN);
-
-    // receive first block and block
-    err = recv(sock, buffer, BUF_LEN, 0);
-    if (err <= 0)
-    {
-        printf("Error receiving: %d\n", err);
-        close(sock);
-        return;
-    }
-    buffer[err] = 0;
-    printf("Received %d bytes (%s)\n", err, log_strdup(buffer));
-
-    while (err > 0)
-    {
-        memset(buffer, 0, BUF_LEN);
-        err = recv(sock, buffer, BUF_LEN, MSG_DONTWAIT);
-        if (err > 0)
+    printf("Creating sockets\n");
+    for (int i = 0; i < MDM_MAX_SOCKETS; i++) {
+        sockets[i] = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (sockets[i] < 0)
         {
-            buffer[err] = 0;
-            printf("Received %d bytes (%s)\n", err, log_strdup(buffer));
-        }
-        if (err < 0 && err != -EAGAIN) {
-            printf("Error receiving: %d\n", err);
-            close(sock);
+            printf("Error opening socket: %d\n", err);
+            close_sockets();
             return;
         }
     }
 
-    printf("Connected, sending final message...\n");
-    err = send(sock, UDP_MESSAGE, strlen(UDP_MESSAGE), 0);
-    if (err < strlen(UDP_MESSAGE))
-    {
-        printf("Error sending: %d\n", err);
-        close(sock);
-        return;
+    printf("Connecting sockets\n");
+    for (int i = 0; i < MDM_MAX_SOCKETS; i++) {
+        static struct sockaddr_in remote_addr = {
+            sin_family : AF_INET,
+        };
+        remote_addr.sin_port = htons(1234);
+
+        net_addr_pton(AF_INET, "172.16.15.14", &remote_addr.sin_addr);
+
+        err = connect(sockets[i], (struct sockaddr *)&remote_addr, sizeof(remote_addr));
+        if (err < 0)
+        {
+            printf("Unable to connect to backend: %d\n", err);
+            close_sockets();
+            return;
+        }
     }
 
-    close(sock);
-    printf("Done socket\n");
+    printf("Sending messages\n");
+    for (int i = 0; i < MDM_MAX_SOCKETS; i++) {
+        sprintf(udp_message, "Hello this is socket %d", i);
+        err = send(sockets[i], udp_message, strlen(udp_message), 0);
+        if (err < strlen(udp_message))
+        {
+            printf("Error sending: %d\n", err);
+            close_sockets();
+            return;
+        }
+    }
+
+    memset(udp_message, 0, sizeof(udp_message));
+
+    printf("Polling\n");
+
+    // Poll all sockets
+    bool data = false;
+    while (!data) {
+        struct pollfd polls[MDM_MAX_SOCKETS];
+        for (int i = 0; i < MDM_MAX_SOCKETS; i++) {
+            polls[i].fd = sockets[i];
+            polls[i].events = POLLIN|POLLOUT;
+        }
+        err = poll(polls, MDM_MAX_SOCKETS, 1000);
+        if (err < 0) {
+            printf("Error polling: %d\n", err);
+            close_sockets();
+            return;
+        }
+        for (int i = 0; i < MDM_MAX_SOCKETS; i++) {
+            if ((polls[i].revents & POLLIN) == POLLIN) {
+                printf("Got data on socket fd=%d\n", sockets[i]);
+                memset(udp_message, 0, sizeof(udp_message));
+                err = recv(sockets[i], udp_message, sizeof(udp_message), 0);
+                if (err < 0) {
+                    printf("Error receiving on socket %d: %d\n", i, err);
+                    close_sockets();
+                    return;
+                }
+                printf("Received %d bytes (%s) on socket %d\n", err, udp_message, sockets[i]);
+                data = true;
+            }
+        }
+    }
+    close_sockets();
+
+    printf("UDP test complete\n");
 }
