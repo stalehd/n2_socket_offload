@@ -9,9 +9,15 @@ The socket offloading is suitable for UDP data through N2 modules.
 N3 modules use different AT commands (AT+NSOCR for N2, AT+USOCR for N3) but should
 be relatively simple to implement.
 
+
 ## Signing and flashing the image
 
-There are a few steps that must be done before the image can be signed. Start by generating a key (and keep it in safe place -- without it you can't build valid binaries for the device)
+There are a few steps that must be done before the image can be signed. Start by
+generating a key (and keep it in safe place -- without it you can't build valid
+binaries for the device)
+
+Run `make flash` to build, sign and copy the image to the flash. This requires
+MCUBoot to be installed.
 
 ### Create a key
 
@@ -32,7 +38,9 @@ cd mcuboot/boot/zephyr
 git checkout v1.4.0
 ```
 
-Edit the `prj.conf` file and set the `CONFIG_BOOT_SIGNATURE_KEY_FILE` to point to the key you generated above, add RTT logging at the end (it won't matter but it's nice to see the RTT output from both the bootloader and the image):
+Edit the `prj.conf` file and set the `CONFIG_BOOT_SIGNATURE_KEY_FILE` to point
+to the key you generated above, add RTT logging at the end (it won't matter but
+it's nice to see the RTT output from both the bootloader and the image):
 
 ```
 # RTT logging
@@ -66,7 +74,6 @@ $ make
 $ curl -XPOST  -HX-API-Token:{token} https://api.nbiot.engineering/collections/{cid}/firmware -F $ image=@build/zephyr/zephyr.signed.bin
 $ curl -XPATCH -d'{"version":"{version}"}'  -HX-API-Token:{token} https://api.nbiot.engineering/collections/{cid}/firmware/{fid}
 ```
-
 Set the new version on the device with PATCH:
 
 `curl -XPATCH -d'{"firmware":{"targetFirmwareId": "{fid}"}}'  -HX-API-Token:{token} https://api.nbiot.engineering/collections/{cid}/devices/{did}`
@@ -75,12 +82,23 @@ This will update the device the next time it checks in.
 
 ## What I've learned
 
-The *NMI* part of the `+NSONMI` URC makes the N2 behave... interestingly. If you ignore it you won't be able to read or write sockets until you've sent AT+NSORF to the modem. It will say "OK" whenever you send something but nothing will be sent. It could be the network that times out something somewhere but I don't know. It's weird.
++NSONMI and power saving modes works... not intuitively. I'm not sure if this is
+the module, the network or both trying to make my life hard but if you ignore
+NSONMI URCs you won't be able to send or receive data until something times out.
 
-AT+NSORF doesn't like:
+Rebooting the module or powering it down doesn't help. It still has to time out.
+Turning off power save mode makes is behave predictably. There's probably a good
+explanation to this (or rather *an* explanation) but I can't tell for sure. For
+our current needs power isn't an issue so power save is turned off.
 
-* Being called before NSONMI is issued. It will return an undocumented response
-* Being called with length > 512. Anything bigger makes it respond with ERROR even if it could... respond with less. Because that would make sense.
+Also AT+NSORF responds with an undocumented response if you call it before the
++NSONMI URC is sent. Don't use AT+NSORF with lengths > 512. It will say "ERROR"
+regardless. This probably made a lot of sense for the one writing the firmware
+but I have some bad news for you: It does not make sense for anyone else, mmkay?
 
-CoAP options in Zephyr is by default 12 bytes. Anything longer will say "unexpected endpoint data received" and some kind of -EINVAL return value. The value isn't *unexpected* or *invalid* but the default option size is too small to accomodate the response. It *is* logged but not by the CoAP logger. It's logged by the NETWORK logger. Great.
-
+CoAP options in Zephyr is by default 12 bytes. Anything longer will make the
+LwM2M client say "unexpected endpoint data received". If you look at the source
+code you'll see that it gets an EINVAL error code. Fear not! It's the server that
+uses options more than 12 bytes long. This is logged by NET_ERR so I'm pretty
+sure you will miss it. The value isn't *invalid* or *unexpected*, just not long
+enough. Why use your own logger when you can use another subsystem's logger?
